@@ -24,6 +24,7 @@ def LCAG(kc): return (r("QK_LCTL") | r("QK_LALT") | r("QK_LGUI") | (kc))
 def SGUI(kc): return (r("QK_LGUI") | r("QK_LSFT") | (kc))
 def LCA(kc): return (r("QK_LCTL") | r("QK_LALT") | (kc))
 def LSA(kc): return (r("QK_LSFT") | r("QK_LALT") | (kc))
+def LAG(kc): return (r("QK_LALT") | r("QK_LGUI") | (kc))
 def RSA(kc): return (r("QK_RSFT") | r("QK_RALT") | (kc))
 def RCS(kc): return (r("QK_RCTL") | r("QK_RSFT") | (kc))
 def LCG(kc): return (r("QK_LCTL") | r("QK_LGUI") | (kc))
@@ -58,6 +59,7 @@ def HYPR_T(kc): return MT(r("MOD_LCTL") | r("MOD_LSFT") | r("MOD_LALT") | r("MOD
 def SGUI_T(kc): return MT(r("MOD_LGUI") | r("MOD_LSFT"), kc)
 def LCA_T(kc): return MT(r("MOD_LCTL") | r("MOD_LALT"), kc)
 def LSA_T(kc): return MT(r("MOD_LSFT") | r("MOD_LALT"), kc)
+def LAG_T(kc): return MT(r("MOD_LALT") | r("MOD_LGUI"), kc)
 def RSA_T(kc): return MT(r("MOD_RSFT") | r("MOD_RALT"), kc)
 def RCS_T(kc): return MT(r("MOD_RCTL") | r("MOD_RSFT"), kc)
 def LCG_T(kc): return MT(r("MOD_LCTL") | r("MOD_LGUI"), kc)
@@ -69,7 +71,7 @@ functions = {
     "RCTL": RCTL, "RSFT": RSFT, "RALT": RALT, "RGUI": RGUI, "ALGR": RALT, "ROPT": RALT, "RCMD": RGUI, "RWIN": RGUI,
     "HYPR": HYPR, "MEH": MEH, "LCAG": LCAG, "SGUI": SGUI, "SCMD": SGUI, "SWIN": SGUI, "LSG": SGUI,
     "C_S": C_S,
-    "LCA": LCA, "LSA": LSA, "RSA": RSA, "RCS": RCS, "SAGR": RSA,
+    "LCA": LCA, "LSA": LSA, "LAG": LAG, "RSA": RSA, "RCS": RCS, "SAGR": RSA,
     "C": LCTL, "S": LSFT, "A": LALT, "G": LGUI,
     "LT": LT, "TO": TO, "MO": MO, "DF": DF, "TG": TG, "OSL": OSL, "LM": LM, "OSM": OSM, "TT": TT, "MT": MT,
     "LCTL_T": LCTL_T, "RCTL_T": RCTL_T, "CTL_T": LCTL_T,
@@ -80,7 +82,7 @@ functions = {
     "C_S_T": C_S_T, "MEH_T": MEH_T,
     "LCAG_T": LCAG_T, "RCAG_T": RCAG_T, "HYPR_T": HYPR_T, "SGUI_T": SGUI_T, "SCMD_T": SGUI_T, "SWIN_T": SGUI_T,
     "LSG_T": SGUI_T,
-    "LCA_T": LCA_T, "LSA_T": LSA_T, "RSA_T": RSA_T, "RCS_T": RCS_T, "SAGR_T": RSA_T, "ALL_T": HYPR_T,
+    "LCA_T": LCA_T, "LSA_T": LSA_T, "LAG_T": LAG_T, "RSA_T": RSA_T, "RCS_T": RCS_T, "SAGR_T": RSA_T, "ALL_T": HYPR_T,
     "TD": TD,
     "LCG": LCG, "RCG": RCG, "LCG_T": LCG_T, "RCG_T": RCG_T,
 }

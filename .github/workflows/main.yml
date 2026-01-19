@@ -44,7 +44,7 @@ jobs:
         path: Vial-x86_64.AppImage
 
   build-mac:
-    runs-on: macos-13
+    runs-on: macos-15
     env:
       MACOSX_DEPLOYMENT_TARGET: 10.9
 
