@@ -4,8 +4,22 @@ import platform
 from json import JSONDecodeError
 
 from PyQt5.QtCore import Qt, QSettings, QStandardPaths, QTimer, QRect, QT_VERSION_STR
-from PyQt5.QtWidgets import QWidget, QComboBox, QToolButton, QHBoxLayout, QVBoxLayout, QMainWindow, QAction, qApp, \
-    QFileDialog, QDialog, QTabWidget, QActionGroup, QMessageBox, QLabel
+from PyQt5.QtWidgets import (
+    QWidget,
+    QComboBox,
+    QToolButton,
+    QHBoxLayout,
+    QVBoxLayout,
+    QMainWindow,
+    QAction,
+    qApp,
+    QFileDialog,
+    QDialog,
+    QTabWidget,
+    QActionGroup,
+    QMessageBox,
+    QLabel,
+)
 
 import os
 import sys
@@ -25,6 +39,10 @@ from editor.layout_editor import LayoutEditor
 from editor.macro_recorder import MacroRecorder
 from editor.qmk_settings import QmkSettings
 from editor.rgb_configurator import RGBConfigurator
+from editor.keychron_settings import KeychronSettings
+from editor.snap_click import SnapClickEditor
+from editor.keychron_rgb import KeychronRGBEditor
+from editor.analog_matrix import AnalogMatrixEditor
 from tabbed_keycodes import TabbedKeycodes
 from editor.tap_dance import TapDance
 from unlocker import Unlocker
@@ -36,7 +54,6 @@ import themes
 
 
 class MainWindow(QMainWindow):
-
     def __init__(self, appctx):
         super().__init__()
         self.appctx = appctx
@@ -52,7 +69,7 @@ class MainWindow(QMainWindow):
         _pos = self.settings.value("pos", None)
         # NOTE: QDesktopWidget is obsolete, but QApplication.screenAt only usable in Qt 5.10+
         if _pos and qApp.desktop().geometry().contains(QRect(_pos, self.size())):
-        #if _pos and qApp.screenAt(_pos) and qApp.screenAt(_pos + (self.rect().bottomRight())):
+            # if _pos and qApp.screenAt(_pos) and qApp.screenAt(_pos + (self.rect().bottomRight())):
             self.move(self.settings.value("pos"))
 
         if self.settings.value("maximized", False, bool):
@@ -86,11 +103,31 @@ class MainWindow(QMainWindow):
         self.matrix_tester = MatrixTest(self.layout_editor)
         self.rgb_configurator = RGBConfigurator()
 
-        self.editors = [(self.keymap_editor, "Keymap"), (self.layout_editor, "Layout"), (self.macro_recorder, "Macros"),
-                        (self.rgb_configurator, "Lighting"), (self.tap_dance, "Tap Dance"), (self.combos, "Combos"),
-                        (self.key_override, "Key Overrides"), (self.alt_repeat_key, "Alt Repeat Key"),
-                        (self.qmk_settings, "QMK Settings"), (self.matrix_tester, "Matrix tester"),
-                        (self.firmware_flasher, "Firmware updater")]
+        # Keychron-specific editors
+        self.keychron_settings = KeychronSettings()
+        self.snap_click = SnapClickEditor()
+        self.keychron_rgb = KeychronRGBEditor(self.layout_editor)
+        self.analog_matrix = AnalogMatrixEditor()
+
+        self.editors = [
+            (self.keymap_editor, "Keymap"),
+            # Keychron-specific editors (high priority for Keychron users)
+            (self.keychron_settings, "Keychron"),
+            (self.keychron_rgb, "Keychron RGB"),
+            (self.snap_click, "Snap Click"),
+            (self.analog_matrix, "Analog Matrix"),
+            # Standard editors
+            (self.layout_editor, "Layout"),
+            (self.macro_recorder, "Macros"),
+            (self.rgb_configurator, "Lighting"),
+            (self.tap_dance, "Tap Dance"),
+            (self.combos, "Combos"),
+            (self.key_override, "Key Overrides"),
+            (self.alt_repeat_key, "Alt Repeat Key"),
+            (self.qmk_settings, "QMK Settings"),
+            (self.matrix_tester, "Matrix tester"),
+            (self.firmware_flasher, "Firmware updater"),
+        ]
 
         Unlocker.global_layout_editor = self.layout_editor
         Unlocker.global_main_window = self
@@ -100,12 +137,16 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self.on_tab_changed)
         self.refresh_tabs()
 
-        no_devices = 'No devices detected. Connect a Vial-compatible device and press "Refresh"<br>' \
-                     'or select "File" → "Download VIA definitions" in order to enable support for VIA keyboards.'
+        no_devices = (
+            'No devices detected. Connect a Vial-compatible device and press "Refresh"<br>'
+            'or select "File" → "Download VIA definitions" in order to enable support for VIA keyboards.'
+        )
         if sys.platform.startswith("linux"):
-            no_devices += '<br><br>On Linux you need to set up a custom udev rule for keyboards to be detected. ' \
-                          'Follow the instructions linked below:<br>' \
-                          '<a href="https://get.vial.today/manual/linux-udev.html">https://get.vial.today/manual/linux-udev.html</a>'
+            no_devices += (
+                "<br><br>On Linux you need to set up a custom udev rule for keyboards to be detected. "
+                "Follow the instructions linked below:<br>"
+                '<a href="https://get.vial.today/manual/linux-udev.html">https://get.vial.today/manual/linux-udev.html</a>'
+            )
         self.lbl_no_devices = QLabel(tr("MainWindow", no_devices))
         self.lbl_no_devices.setTextFormat(Qt.RichText)
         self.lbl_no_devices.setAlignment(Qt.AlignCenter)
@@ -141,13 +182,16 @@ class MainWindow(QMainWindow):
                 self.autorefresh.load_via_stack(data)
             except JSONDecodeError as e:
                 # the saved file is invalid - just ignore this
-                logging.warning("Failed to parse stored via_keyboards.json: {}".format(e))
+                logging.warning(
+                    "Failed to parse stored via_keyboards.json: {}".format(e)
+                )
 
         # make sure initial state is valid
         self.on_click_refresh()
 
         if sys.platform == "emscripten":
             import vialglue
+
             QTimer.singleShot(100, vialglue.notify_ready)
 
     def init_menu(self):
@@ -162,7 +206,9 @@ class MainWindow(QMainWindow):
         sideload_json_act = QAction(tr("MenuFile", "Sideload VIA JSON..."), self)
         sideload_json_act.triggered.connect(self.on_sideload_json)
 
-        download_via_stack_act = QAction(tr("MenuFile", "Download VIA definitions"), self)
+        download_via_stack_act = QAction(
+            tr("MenuFile", "Download VIA definitions"), self
+        )
         download_via_stack_act.triggered.connect(self.load_via_stack_json)
 
         load_dummy_act = QAction(tr("MenuFile", "Load dummy JSON..."), self)
@@ -224,7 +270,7 @@ class MainWindow(QMainWindow):
             selected_theme = self.get_theme()
             for name, _ in [("System", None)] + themes.themes:
                 act = QAction(tr("MenuTheme", name), self)
-                act.triggered.connect(lambda x,name=name: self.set_theme(name))
+                act.triggered.connect(lambda x, name=name: self.set_theme(name))
                 act.setCheckable(True)
                 act.setChecked(selected_theme == name)
                 theme_group.addAction(act)
@@ -252,6 +298,7 @@ class MainWindow(QMainWindow):
     def on_layout_load(self):
         if sys.platform == "emscripten":
             import vialglue
+
             # Tells the JS bridge to open a file selection dialog
             # so the user can load a layout.
             vialglue.load_layout()
@@ -269,6 +316,7 @@ class MainWindow(QMainWindow):
     def on_layout_save(self):
         if sys.platform == "emscripten":
             import vialglue
+
             layout = self.keymap_editor.save_layout()
             # Passes the current layout to the JS bridge so it can
             # open a file dialog and allow the user to save it to disk.
@@ -291,7 +339,10 @@ class MainWindow(QMainWindow):
         self.combobox_devices.clear()
         for dev in devices:
             self.combobox_devices.addItem(dev.title())
-            if self.autorefresh.current_device and dev.desc["path"] == self.autorefresh.current_device.desc["path"]:
+            if (
+                self.autorefresh.current_device
+                and dev.desc["path"] == self.autorefresh.current_device.desc["path"]
+            ):
                 self.combobox_devices.setCurrentIndex(self.combobox_devices.count() - 1)
 
         self.combobox_devices.blockSignals(False)
@@ -310,35 +361,66 @@ class MainWindow(QMainWindow):
         try:
             self.autorefresh.select_device(self.combobox_devices.currentIndex())
         except ProtocolError:
-            QMessageBox.warning(self, "", "Unsupported protocol version!\n"
-                                          "Please download latest Vial from https://get.vial.today/")
+            QMessageBox.warning(
+                self,
+                "",
+                "Unsupported protocol version!\n"
+                "Please download latest Vial from https://get.vial.today/",
+            )
 
         if isinstance(self.autorefresh.current_device, VialKeyboard):
             keyboard_id = self.autorefresh.current_device.keyboard.keyboard_id
-            if (keyboard_id in EXAMPLE_KEYBOARDS) or ((keyboard_id & 0xFFFFFFFFFFFFFF) == EXAMPLE_KEYBOARD_PREFIX):
-                QMessageBox.warning(self, "", "An example keyboard UID was detected.\n"
-                                              "Please change your keyboard UID to be unique before you ship!")
+            if (keyboard_id in EXAMPLE_KEYBOARDS) or (
+                (keyboard_id & 0xFFFFFFFFFFFFFF) == EXAMPLE_KEYBOARD_PREFIX
+            ):
+                QMessageBox.warning(
+                    self,
+                    "",
+                    "An example keyboard UID was detected.\n"
+                    "Please change your keyboard UID to be unique before you ship!",
+                )
 
         self.rebuild()
         self.refresh_tabs()
 
     def rebuild(self):
         # don't show "Security" menu for bootloader mode, as the bootloader is inherently insecure
-        self.security_menu.menuAction().setVisible(isinstance(self.autorefresh.current_device, VialKeyboard))
+        self.security_menu.menuAction().setVisible(
+            isinstance(self.autorefresh.current_device, VialKeyboard)
+        )
 
         self.about_keyboard_act.setVisible(False)
         if isinstance(self.autorefresh.current_device, VialKeyboard):
-            self.about_keyboard_act.setText("About {}...".format(self.autorefresh.current_device.title()))
+            self.about_keyboard_act.setText(
+                "About {}...".format(self.autorefresh.current_device.title())
+            )
             self.about_keyboard_act.setVisible(True)
 
         # if unlock process was interrupted, we must finish it first
-        if isinstance(self.autorefresh.current_device, VialKeyboard) and self.autorefresh.current_device.keyboard.get_unlock_in_progress():
+        if (
+            isinstance(self.autorefresh.current_device, VialKeyboard)
+            and self.autorefresh.current_device.keyboard.get_unlock_in_progress()
+        ):
             Unlocker.unlock(self.autorefresh.current_device.keyboard)
             self.autorefresh.current_device.keyboard.reload()
 
-        for e in [self.layout_editor, self.keymap_editor, self.firmware_flasher, self.macro_recorder,
-                  self.tap_dance, self.combos, self.key_override, self.alt_repeat_key,
-                  self.qmk_settings, self.matrix_tester, self.rgb_configurator]:
+        for e in [
+            self.layout_editor,
+            self.keymap_editor,
+            self.firmware_flasher,
+            self.macro_recorder,
+            self.tap_dance,
+            self.combos,
+            self.key_override,
+            self.alt_repeat_key,
+            self.qmk_settings,
+            self.matrix_tester,
+            self.rgb_configurator,
+            self.keychron_settings,
+            self.snap_click,
+            self.keychron_rgb,
+            self.analog_matrix,
+        ]:
             e.rebuild(self.autorefresh.current_device)
 
     def refresh_tabs(self):
@@ -353,7 +435,9 @@ class MainWindow(QMainWindow):
     def load_via_stack_json(self):
         from urllib.request import urlopen
 
-        with urlopen("https://github.com/vial-kb/via-keymap-precompiled/raw/main/via_keyboard_stack.json") as resp:
+        with urlopen(
+            "https://github.com/vial-kb/via-keymap-precompiled/raw/main/via_keyboard_stack.json"
+        ) as resp:
             data = resp.read()
         self.autorefresh.load_via_stack(data)
         # write to cache
@@ -420,7 +504,12 @@ class MainWindow(QMainWindow):
         themes.Theme.set_theme(theme)
         self.settings.setValue("theme", theme)
         msg = QMessageBox()
-        msg.setText(tr("MainWindow", "In order to fully apply the theme you should restart the application."))
+        msg.setText(
+            tr(
+                "MainWindow",
+                "In order to fully apply the theme you should restart the application.",
+            )
+        )
         msg.exec_()
 
     def on_tab_changed(self, index):
@@ -439,11 +528,13 @@ class MainWindow(QMainWindow):
 
     def about_vial(self):
         title = "About Vial"
-        text = 'Vial {}<br><br>Python {}<br>Qt {}<br><br>' \
-               'Licensed under the terms of the<br>GNU General Public License (version 2 or later)<br><br>' \
-               '<a href="https://get.vial.today/">https://get.vial.today/</a>' \
-               .format(qApp.applicationVersion(),
-                       platform.python_version(), QT_VERSION_STR)
+        text = (
+            "Vial {}<br><br>Python {}<br>Qt {}<br><br>"
+            "Licensed under the terms of the<br>GNU General Public License (version 2 or later)<br><br>"
+            '<a href="https://get.vial.today/">https://get.vial.today/</a>'.format(
+                qApp.applicationVersion(), platform.python_version(), QT_VERSION_STR
+            )
+        )
 
         if sys.platform == "emscripten":
             self.msg_about = QMessageBox()
