@@ -159,10 +159,10 @@ class ActuationKeyboardWidget(KeyboardWidget):
         regular_pen.setColor(QApplication.palette().color(QPalette.ButtonText))
         qp.setPen(regular_pen)
 
-        # For selected keys
+        # For selected keys - use theme-aware highlight color
         selected_pen = QPen()
-        selected_pen.setColor(QColor(255, 255, 0))  # Yellow highlight
-        selected_pen.setWidthF(3.0)
+        selected_pen.setColor(QApplication.palette().color(QPalette.Highlight))
+        selected_pen.setWidthF(2.0)
 
         # Default brushes (for keys without settings)
         default_background = QBrush()
@@ -238,12 +238,13 @@ class ActuationKeyboardWidget(KeyboardWidget):
 
                     # Add mode indicator
                     mode_char = ""
-                    if mode == 1:  # Regular
-                        mode_char = ""
+                    if mode == 0:  # Global (inherits)
+                        mode_char = "G"
                     elif mode == 2:  # Rapid Trigger
                         mode_char = "R"
                     elif mode == 3:  # DKS
                         mode_char = "D"
+                    # mode == 1 (Regular) has no indicator
 
                     if mode_char:
                         text = f"{mode_char}\n{text}"

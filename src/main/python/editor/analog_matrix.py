@@ -34,7 +34,6 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QDoubleSpinBox,
     QProgressBar,
-    QLineEdit,
 )
 
 from editor.basic_editor import BasicEditor
@@ -193,38 +192,65 @@ class AnalogMatrixEditor(BasicEditor):
         for mode_id, name in AKM_MODE_NAMES.items():
             if mode_id in [AKM_GLOBAL, AKM_REGULAR, AKM_RAPID]:
                 self.key_mode.addItem(name, mode_id)
+        self.key_mode.setToolTip(
+            tr(
+                "AnalogMatrix",
+                "Global: Use profile default settings\n"
+                "Regular: Fixed actuation point\n"
+                "Rapid Trigger: Dynamic actuation based on key travel direction",
+            )
+        )
         self.key_mode.currentIndexChanged.connect(self.on_mode_changed)
         settings_layout.addWidget(self.key_mode, 0, 1)
 
         # Actuation point (0.1mm units, range 1-40 = 0.1mm to 4.0mm)
-        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Actuation (mm):")), 0, 2)
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Actuation Point:")), 0, 2)
         self.actuation_point = QDoubleSpinBox()
         self.actuation_point.setRange(0.1, 4.0)
         self.actuation_point.setSingleStep(0.1)
         self.actuation_point.setDecimals(1)
         self.actuation_point.setValue(2.0)
+        self.actuation_point.setSuffix(" mm")
+        self.actuation_point.setToolTip(
+            tr(
+                "AnalogMatrix",
+                "Distance the key must travel before registering a press (0.1-4.0mm)",
+            )
+        )
         self.actuation_point.valueChanged.connect(self.on_actuation_changed)
         settings_layout.addWidget(self.actuation_point, 0, 3)
 
         # Rapid Trigger sensitivity
-        settings_layout.addWidget(
-            QLabel(tr("AnalogMatrix", "RT Sensitivity (mm):")), 1, 0
-        )
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "RT Sensitivity:")), 1, 0)
         self.rt_sensitivity = QDoubleSpinBox()
         self.rt_sensitivity.setRange(0.1, 4.0)
         self.rt_sensitivity.setSingleStep(0.1)
         self.rt_sensitivity.setDecimals(1)
         self.rt_sensitivity.setValue(0.3)
+        self.rt_sensitivity.setSuffix(" mm")
+        self.rt_sensitivity.setToolTip(
+            tr(
+                "AnalogMatrix",
+                "Rapid Trigger press sensitivity - distance key must move down to re-register",
+            )
+        )
         self.rt_sensitivity.valueChanged.connect(self.on_actuation_changed)
         settings_layout.addWidget(self.rt_sensitivity, 1, 1)
 
         # Rapid Trigger release sensitivity
-        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "RT Release (mm):")), 1, 2)
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "RT Release:")), 1, 2)
         self.rt_release_sensitivity = QDoubleSpinBox()
         self.rt_release_sensitivity.setRange(0.1, 4.0)
         self.rt_release_sensitivity.setSingleStep(0.1)
         self.rt_release_sensitivity.setDecimals(1)
         self.rt_release_sensitivity.setValue(0.3)
+        self.rt_release_sensitivity.setSuffix(" mm")
+        self.rt_release_sensitivity.setToolTip(
+            tr(
+                "AnalogMatrix",
+                "Rapid Trigger release sensitivity - distance key must move up to release",
+            )
+        )
         self.rt_release_sensitivity.valueChanged.connect(self.on_actuation_changed)
         settings_layout.addWidget(self.rt_release_sensitivity, 1, 3)
 
@@ -237,10 +263,16 @@ class AnalogMatrixEditor(BasicEditor):
 
         self.btn_apply_selected = QPushButton(tr("AnalogMatrix", "Apply to Selected"))
         self.btn_apply_selected.clicked.connect(self._apply_perkey_settings)
+        self.btn_apply_selected.setToolTip(
+            tr("AnalogMatrix", "Apply settings only to the selected keys")
+        )
         apply_layout.addWidget(self.btn_apply_selected)
 
         self.btn_apply_global = QPushButton(tr("AnalogMatrix", "Apply to All Keys"))
         self.btn_apply_global.clicked.connect(self.apply_global_settings)
+        self.btn_apply_global.setToolTip(
+            tr("AnalogMatrix", "Apply settings globally to all keys in this profile")
+        )
         apply_layout.addWidget(self.btn_apply_global)
 
         global_layout.addLayout(apply_layout)
@@ -473,7 +505,7 @@ class AnalogMatrixEditor(BasicEditor):
         selected = self.actuation_keyboard.get_selected_keys()
         if not selected:
             QMessageBox.warning(
-                self.widget(),
+                self.tabs,
                 tr("AnalogMatrix", "No Keys Selected"),
                 tr("AnalogMatrix", "Please select at least one key to apply settings."),
             )
@@ -510,7 +542,7 @@ class AnalogMatrixEditor(BasicEditor):
                     row, col, mode, act_pt, sens, rls_sens
                 )
             QMessageBox.information(
-                self.widget(),
+                self.tabs,
                 tr("AnalogMatrix", "Applied"),
                 tr("AnalogMatrix", "Settings applied to {} keys.").format(
                     len(selected)
@@ -518,7 +550,7 @@ class AnalogMatrixEditor(BasicEditor):
             )
         else:
             QMessageBox.warning(
-                self.widget(),
+                self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to apply settings."),
             )
@@ -527,10 +559,7 @@ class AnalogMatrixEditor(BasicEditor):
         """Refresh per-key settings from keyboard."""
         if not self.keyboard:
             return
-
-        # For now, we can't read individual key settings from the keyboard
-        # The Keychron protocol doesn't seem to have a per-key read command
-        # So we just reinitialize the keyboard widget
+        # Re-read and setup the keyboard widget with fresh settings
         self._setup_actuation_keyboard()
 
     def _setup_actuation_keyboard(self):
@@ -543,23 +572,148 @@ class AnalogMatrixEditor(BasicEditor):
             encoders = getattr(self.keyboard, "encoders", [])
             self.actuation_keyboard.set_keys(self.keyboard.keys, encoders)
 
-        # Initialize with default settings for all keys
         rows = getattr(self.keyboard, "rows", 6)
         cols = getattr(self.keyboard, "cols", 20)
 
-        key_settings = {}
-        for row in range(rows):
-            for col in range(cols):
-                # Default to 2.0mm actuation, regular mode
-                key_settings[(row, col)] = {
-                    "mode": AKM_REGULAR,
-                    "actuation_point": 20,  # 2.0mm
-                    "sensitivity": 3,  # 0.3mm
-                    "release_sensitivity": 3,  # 0.3mm
-                }
+        # Try to read per-key settings from the keyboard
+        profile = self.profile_selector.currentData()
+        if profile is None:
+            profile = 0
+
+        key_settings = None
+        if hasattr(self.keyboard, "get_keychron_analog_key_configs"):
+            try:
+                key_settings = self.keyboard.get_keychron_analog_key_configs(profile)
+            except Exception:
+                pass  # Fall back to defaults
+
+        # Use defaults if reading failed
+        if not key_settings:
+            key_settings = {}
+            for row in range(rows):
+                for col in range(cols):
+                    key_settings[(row, col)] = {
+                        "mode": AKM_REGULAR,
+                        "actuation_point": 20,  # 2.0mm
+                        "sensitivity": 3,  # 0.3mm
+                        "release_sensitivity": 3,  # 0.3mm
+                    }
 
         self.actuation_keyboard.set_key_settings(key_settings)
         self.actuation_keyboard.update()
+
+    def _rebuild_socd_tab(self):
+        """Populate SOCD tab with current SOCD pairs from the keyboard."""
+        # Clear existing widgets
+        while self.socd_container_layout.count():
+            item = self.socd_container_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not self.keyboard:
+            return
+
+        socd_count = getattr(self.keyboard, "keychron_analog_socd_count", 0)
+        if socd_count == 0:
+            no_socd_label = QLabel(
+                tr("AnalogMatrix", "No SOCD slots available on this keyboard.")
+            )
+            self.socd_container_layout.addWidget(no_socd_label)
+            self.socd_container_layout.addStretch()
+            return
+
+        # Add header
+        header = QLabel(
+            tr(
+                "AnalogMatrix",
+                "Configure SOCD pairs below. Each pair defines two opposing keys.",
+            )
+        )
+        self.socd_container_layout.addWidget(header)
+
+        # Create widgets for each SOCD slot
+        self.socd_widgets = []
+        for i in range(socd_count):
+            group = QGroupBox(tr("AnalogMatrix", "SOCD Pair {}").format(i + 1))
+            layout = QGridLayout()
+
+            # Key 1
+            layout.addWidget(QLabel(tr("AnalogMatrix", "Key 1 (Row, Col):")), 0, 0)
+            row1_spin = QSpinBox()
+            row1_spin.setRange(0, 20)
+            layout.addWidget(row1_spin, 0, 1)
+            col1_spin = QSpinBox()
+            col1_spin.setRange(0, 24)
+            layout.addWidget(col1_spin, 0, 2)
+
+            # Key 2
+            layout.addWidget(QLabel(tr("AnalogMatrix", "Key 2 (Row, Col):")), 0, 3)
+            row2_spin = QSpinBox()
+            row2_spin.setRange(0, 20)
+            layout.addWidget(row2_spin, 0, 4)
+            col2_spin = QSpinBox()
+            col2_spin.setRange(0, 24)
+            layout.addWidget(col2_spin, 0, 5)
+
+            # SOCD Type
+            layout.addWidget(QLabel(tr("AnalogMatrix", "Resolution:")), 1, 0)
+            type_combo = QComboBox()
+            for type_id, name in SOCD_TYPE_NAMES.items():
+                type_combo.addItem(name, type_id)
+            layout.addWidget(type_combo, 1, 1, 1, 2)
+
+            # Apply button for this pair
+            apply_btn = QPushButton(tr("AnalogMatrix", "Apply"))
+            apply_btn.clicked.connect(lambda checked, idx=i: self._apply_socd_pair(idx))
+            layout.addWidget(apply_btn, 1, 5)
+
+            group.setLayout(layout)
+            self.socd_container_layout.addWidget(group)
+
+            self.socd_widgets.append(
+                {
+                    "row1": row1_spin,
+                    "col1": col1_spin,
+                    "row2": row2_spin,
+                    "col2": col2_spin,
+                    "type": type_combo,
+                }
+            )
+
+        self.socd_container_layout.addStretch()
+
+    def _apply_socd_pair(self, index):
+        """Apply a single SOCD pair configuration."""
+        if not self.keyboard or index >= len(self.socd_widgets):
+            return
+
+        widgets = self.socd_widgets[index]
+        profile = self.profile_selector.currentData()
+        if profile is None:
+            profile = 0
+
+        row1 = widgets["row1"].value()
+        col1 = widgets["col1"].value()
+        row2 = widgets["row2"].value()
+        col2 = widgets["col2"].value()
+        socd_type = widgets["type"].currentData()
+
+        success = self.keyboard.set_keychron_analog_socd(
+            profile, row1, col1, row2, col2, index, socd_type
+        )
+
+        if success:
+            QMessageBox.information(
+                self.tabs,
+                tr("AnalogMatrix", "Applied"),
+                tr("AnalogMatrix", "SOCD pair {} configured.").format(index + 1),
+            )
+        else:
+            QMessageBox.warning(
+                self.tabs,
+                tr("AnalogMatrix", "Error"),
+                tr("AnalogMatrix", "Failed to apply SOCD configuration."),
+            )
 
     def valid(self):
         """Check if this tab should be shown."""
@@ -615,6 +769,9 @@ class AnalogMatrixEditor(BasicEditor):
         # Setup per-key actuation keyboard
         self._setup_actuation_keyboard()
 
+        # Populate SOCD tab
+        self._rebuild_socd_tab()
+
         self._updating = False
 
     def on_profile_changed(self):
@@ -633,13 +790,13 @@ class AnalogMatrixEditor(BasicEditor):
         if profile is not None:
             if self.keyboard.save_keychron_analog_profile(profile):
                 QMessageBox.information(
-                    self.widget(),
+                    self.tabs,
                     tr("AnalogMatrix", "Saved"),
                     tr("AnalogMatrix", "Profile {} saved.").format(profile + 1),
                 )
             else:
                 QMessageBox.warning(
-                    self.widget(),
+                    self.tabs,
                     tr("AnalogMatrix", "Error"),
                     tr("AnalogMatrix", "Failed to save profile."),
                 )
@@ -652,7 +809,7 @@ class AnalogMatrixEditor(BasicEditor):
         if profile is not None:
             if (
                 QMessageBox.question(
-                    self.widget(),
+                    self.tabs,
                     tr("AnalogMatrix", "Reset Profile"),
                     tr("AnalogMatrix", "Reset Profile {} to defaults?").format(
                         profile + 1
@@ -690,13 +847,13 @@ class AnalogMatrixEditor(BasicEditor):
             profile, mode, act_pt, sens, rls_sens, entire=True
         ):
             QMessageBox.information(
-                self.widget(),
+                self.tabs,
                 tr("AnalogMatrix", "Applied"),
                 tr("AnalogMatrix", "Settings applied to all keys."),
             )
         else:
             QMessageBox.warning(
-                self.widget(),
+                self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to apply settings."),
             )
@@ -724,7 +881,7 @@ class AnalogMatrixEditor(BasicEditor):
             )
         else:
             QMessageBox.warning(
-                self.widget(),
+                self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to start calibration."),
             )
@@ -789,13 +946,13 @@ class AnalogMatrixEditor(BasicEditor):
         curve = [slider.value() for slider, _ in self.curve_sliders]
         if self.keyboard.set_keychron_analog_curve(curve):
             QMessageBox.information(
-                self.widget(),
+                self.tabs,
                 tr("AnalogMatrix", "Applied"),
                 tr("AnalogMatrix", "Curve settings applied."),
             )
         else:
             QMessageBox.warning(
-                self.widget(),
+                self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to apply curve settings."),
             )

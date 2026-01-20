@@ -91,11 +91,11 @@ class SnapClickEntry(QFrame):
         """Convert raw keycode to QMK string."""
         if keycode == 0:
             return "KC_NO"
-        # Try to get the QMK ID from Keycode
+        # Use Keycode.serialize to convert integer to QMK string
         try:
-            kc = Keycode.serialize(keycode)
-            if kc and hasattr(kc, "qmk_id"):
-                return kc.qmk_id
+            qmk_str = Keycode.serialize(keycode)
+            if qmk_str:
+                return qmk_str
         except Exception:
             pass
         # Return as hex if we can't find a name

@@ -1360,3 +1360,255 @@ class ProtocolKeychron(BaseProtocol):
         ):
             return data[3]
         return CALIB_OFF
+
+    def get_keychron_analog_profile_raw(self, profile, offset=0, size=32):
+        """
+        Read raw profile data from the keyboard.
+
+        This allows reading the per-key actuation settings stored in the profile.
+        The profile structure is:
+        - analog_key_config_t global (4 bytes)
+        - analog_key_config_t key_config[rows][cols] (4 bytes per key)
+        - okmc_config_t okmc[okmc_count]
+        - socd_config_t socd[socd_count]
+        - uint8_t name[30]
+        - uint16_t crc16
+
+        Each analog_key_config_t is 4 bytes:
+        - mode:2, act_pt:6 (1 byte)
+        - rpd_trig_sen:6, rpd_trig_sen_deact:6 (split across bytes)
+        - adv_mode:4, adv_mode_data (remaining bits)
+
+        Args:
+            profile: Profile index (0-based)
+            offset: Byte offset into the profile data
+            size: Number of bytes to read (max 26 per call)
+
+        Returns:
+            bytes of raw profile data, or None on failure
+        """
+        # Limit size to what fits in response (32 - 6 header bytes = 26 max)
+        size = min(size, 26)
+
+        data = self.usb_send(
+            self.dev,
+            struct.pack(
+                "<BBBBHB",
+                KC_ANALOG_MATRIX,
+                AMC_GET_PROFILE_RAW,
+                profile,
+                0,  # reserved
+                offset,
+                size,
+            ),
+            retries=3,
+        )
+        if (
+            data[0] == KC_ANALOG_MATRIX
+            and data[1] == AMC_GET_PROFILE_RAW
+            and data[2] == KC_SUCCESS
+        ):
+            # data[3] = profile, data[4:6] = offset, data[6:] = raw data
+            return bytes(data[6 : 6 + size])
+        return None
+
+    def get_keychron_analog_key_configs(self, profile):
+        """
+        Read all per-key actuation configurations from a profile.
+
+        Returns:
+            Dict mapping (row, col) -> settings dict, or None on failure.
+            Each settings dict contains:
+            - mode: 0=Global, 1=Regular, 2=Rapid
+            - actuation_point: 0-40 (0.1mm units, 0=use global)
+            - sensitivity: 0-40 (0.1mm units, 0=use global)
+            - release_sensitivity: 0-40 (0.1mm units, 0=use global)
+        """
+        rows = getattr(self, "rows", 0)
+        cols = getattr(self, "cols", 0)
+
+        if rows == 0 or cols == 0:
+            return None
+
+        # Global config is at offset 0, 4 bytes
+        # Per-key configs start at offset 4, 4 bytes per key
+        # Total per-key data = rows * cols * 4 bytes
+
+        global_offset = 0
+        per_key_offset = 4
+        per_key_size = rows * cols * 4
+
+        # Read global config first
+        global_data = self.get_keychron_analog_profile_raw(profile, global_offset, 4)
+        if not global_data or len(global_data) < 4:
+            logging.warning("Failed to read global analog config")
+            return None
+
+        global_config = self._parse_analog_key_config(global_data)
+        logging.info(
+            "Analog global config: mode=%d, act_pt=%d, sens=%d, rls=%d",
+            global_config["mode"],
+            global_config["actuation_point"],
+            global_config["sensitivity"],
+            global_config["release_sensitivity"],
+        )
+
+        # Read per-key configs in chunks
+        key_configs = {}
+        offset = per_key_offset
+        remaining = per_key_size
+        all_data = bytearray()
+
+        while remaining > 0:
+            chunk_size = min(24, remaining)  # Read 6 keys at a time (24 bytes)
+            chunk = self.get_keychron_analog_profile_raw(profile, offset, chunk_size)
+            if not chunk:
+                logging.warning("Failed to read analog key config at offset %d", offset)
+                break
+            all_data.extend(chunk)
+            offset += chunk_size
+            remaining -= chunk_size
+
+        # Parse per-key configs
+        idx = 0
+        for row in range(rows):
+            for col in range(cols):
+                if idx + 4 <= len(all_data):
+                    key_data = all_data[idx : idx + 4]
+                    config = self._parse_analog_key_config(key_data)
+
+                    # If values are 0, inherit from global
+                    if config["mode"] == 0:
+                        config["mode"] = global_config["mode"]
+                    if config["actuation_point"] == 0:
+                        config["actuation_point"] = global_config["actuation_point"]
+                    if config["sensitivity"] == 0:
+                        config["sensitivity"] = global_config["sensitivity"]
+                    if config["release_sensitivity"] == 0:
+                        config["release_sensitivity"] = global_config[
+                            "release_sensitivity"
+                        ]
+
+                    key_configs[(row, col)] = config
+                    idx += 4
+                else:
+                    # Missing data - use global config
+                    key_configs[(row, col)] = {
+                        "mode": global_config["mode"],
+                        "actuation_point": global_config["actuation_point"],
+                        "sensitivity": global_config["sensitivity"],
+                        "release_sensitivity": global_config["release_sensitivity"],
+                    }
+
+        return key_configs
+
+    def _parse_analog_key_config(self, data):
+        """
+        Parse a 4-byte analog_key_config_t structure.
+
+        Layout:
+        - Byte 0: mode:2 (bits 0-1), act_pt:6 (bits 2-7)
+        - Byte 1: rpd_trig_sen:6 (bits 0-5), rpd_trig_sen_deact[0:2] (bits 6-7)
+        - Byte 2: rpd_trig_sen_deact[2:6] (bits 0-3), adv_mode:4 (bits 4-7)
+        - Byte 3: adv_mode_data
+
+        Returns:
+            Dict with mode, actuation_point, sensitivity, release_sensitivity
+        """
+        if len(data) < 4:
+            return {
+                "mode": 1,
+                "actuation_point": 20,
+                "sensitivity": 3,
+                "release_sensitivity": 3,
+            }
+
+        byte0 = data[0]
+        byte1 = data[1]
+        byte2 = data[2]
+
+        mode = byte0 & 0x03
+        act_pt = (byte0 >> 2) & 0x3F
+        rpd_trig_sen = byte1 & 0x3F
+        # Release sensitivity spans bytes 1-2
+        rpd_trig_sen_deact = ((byte1 >> 6) & 0x03) | ((byte2 & 0x0F) << 2)
+
+        return {
+            "mode": mode if mode > 0 else 1,  # Treat 0 (global) as regular
+            "actuation_point": act_pt if act_pt > 0 else 20,
+            "sensitivity": rpd_trig_sen if rpd_trig_sen > 0 else 3,
+            "release_sensitivity": rpd_trig_sen_deact if rpd_trig_sen_deact > 0 else 3,
+        }
+
+    def get_keychron_analog_socd_pairs(self, profile):
+        """
+        Read SOCD pair configurations from a profile.
+
+        Returns:
+            List of SOCD pair dicts, each containing:
+            - type: SOCD type (0=disabled, 1-6=various modes)
+            - row1, col1: First key position
+            - row2, col2: Second key position
+        """
+        rows = getattr(self, "rows", 0)
+        cols = getattr(self, "cols", 0)
+        socd_count = getattr(self, "keychron_analog_socd_count", 0)
+
+        if socd_count == 0:
+            return []
+
+        # Calculate offset to SOCD data in profile
+        # Profile structure: global(4) + keys(rows*cols*4) + okmc(okmc_count*?) + socd
+        # For now, we'll use a simpler approach - read from known offset
+        # Each socd_config_t is 5 bytes: type(1) + key1_row(1) + key1_col(1) + key2_row(1) + key2_col(1)
+
+        # The SOCD section starts after global + per-key configs + OKMC configs
+        # Since OKMC size varies, we'll calculate based on profile size
+        global_size = 4
+        per_key_size = rows * cols * 4
+        okmc_count = getattr(self, "keychron_analog_okmc_count", 0)
+        okmc_size = okmc_count * 20  # Each OKMC is 20 bytes
+
+        socd_offset = global_size + per_key_size + okmc_size
+        socd_data_size = socd_count * 5
+
+        # Read SOCD data
+        all_data = bytearray()
+        offset = socd_offset
+        remaining = socd_data_size
+
+        while remaining > 0:
+            chunk_size = min(25, remaining)  # 5 SOCD entries at a time
+            chunk = self.get_keychron_analog_profile_raw(profile, offset, chunk_size)
+            if not chunk:
+                break
+            all_data.extend(chunk)
+            offset += chunk_size
+            remaining -= chunk_size
+
+        # Parse SOCD pairs
+        socd_pairs = []
+        for i in range(socd_count):
+            idx = i * 5
+            if idx + 5 <= len(all_data):
+                socd_pairs.append(
+                    {
+                        "type": all_data[idx],
+                        "row1": all_data[idx + 1],
+                        "col1": all_data[idx + 2],
+                        "row2": all_data[idx + 3],
+                        "col2": all_data[idx + 4],
+                    }
+                )
+            else:
+                socd_pairs.append(
+                    {
+                        "type": SOCD_PRI_NONE,
+                        "row1": 0,
+                        "col1": 0,
+                        "row2": 0,
+                        "col2": 0,
+                    }
+                )
+
+        return socd_pairs
