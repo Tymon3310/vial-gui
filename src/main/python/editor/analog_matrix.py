@@ -54,6 +54,7 @@ from protocol.keychron import (
 )
 from util import tr
 from vial_device import VialKeyboard
+from widgets.actuation_keyboard_widget import ActuationKeyboardWidget
 
 
 class AnalogMatrixEditor(BasicEditor):
@@ -82,6 +83,9 @@ class AnalogMatrixEditor(BasicEditor):
 
         # === Joystick Tab ===
         self._create_joystick_tab()
+
+        # === Per-Key Actuation Tab ===
+        self._create_perkey_tab()
 
         self._updating = False
 
@@ -391,6 +395,247 @@ class AnalogMatrixEditor(BasicEditor):
         joystick_layout.addStretch()
         self.tabs.addTab(joystick_widget, tr("AnalogMatrix", "Joystick"))
 
+    def _create_perkey_tab(self):
+        """Create the per-key actuation settings tab."""
+        perkey_widget = QWidget()
+        perkey_layout = QVBoxLayout()
+        perkey_widget.setLayout(perkey_layout)
+
+        info_label = QLabel(
+            tr(
+                "AnalogMatrix",
+                "Click on keys to select them, then adjust actuation settings below.\n"
+                "Hold Ctrl/Shift to select multiple keys. Use 'Select All' to modify all keys at once.",
+            )
+        )
+        info_label.setWordWrap(True)
+        perkey_layout.addWidget(info_label)
+
+        # Keyboard visualization widget
+        self.actuation_keyboard = ActuationKeyboardWidget(None)
+        self.actuation_keyboard.setMinimumHeight(300)
+        self.actuation_keyboard.key_selected.connect(self._on_perkey_key_selected)
+        self.actuation_keyboard.key_deselected.connect(self._on_perkey_key_deselected)
+        perkey_layout.addWidget(self.actuation_keyboard, 1)
+
+        # Selection controls
+        selection_layout = QHBoxLayout()
+
+        self.btn_select_all = QPushButton(tr("AnalogMatrix", "Select All"))
+        self.btn_select_all.clicked.connect(self._perkey_select_all)
+        selection_layout.addWidget(self.btn_select_all)
+
+        self.btn_deselect_all = QPushButton(tr("AnalogMatrix", "Deselect All"))
+        self.btn_deselect_all.clicked.connect(self._perkey_deselect_all)
+        selection_layout.addWidget(self.btn_deselect_all)
+
+        selection_layout.addStretch()
+
+        self.perkey_selection_label = QLabel(tr("AnalogMatrix", "Selected: 0 keys"))
+        selection_layout.addWidget(self.perkey_selection_label)
+
+        perkey_layout.addLayout(selection_layout)
+
+        # Per-key settings group
+        settings_group = QGroupBox(tr("AnalogMatrix", "Selected Key Settings"))
+        settings_layout = QGridLayout()
+
+        # Mode
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Mode:")), 0, 0)
+        self.perkey_mode = QComboBox()
+        for mode_id, name in AKM_MODE_NAMES.items():
+            if mode_id in [AKM_GLOBAL, AKM_REGULAR, AKM_RAPID]:
+                self.perkey_mode.addItem(name, mode_id)
+        settings_layout.addWidget(self.perkey_mode, 0, 1)
+
+        # Actuation point
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Actuation (mm):")), 0, 2)
+        self.perkey_actuation = QDoubleSpinBox()
+        self.perkey_actuation.setRange(0.1, 4.0)
+        self.perkey_actuation.setSingleStep(0.1)
+        self.perkey_actuation.setDecimals(1)
+        self.perkey_actuation.setValue(2.0)
+        settings_layout.addWidget(self.perkey_actuation, 0, 3)
+
+        # RT Sensitivity
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "RT Sens (mm):")), 1, 0)
+        self.perkey_sensitivity = QDoubleSpinBox()
+        self.perkey_sensitivity.setRange(0.1, 4.0)
+        self.perkey_sensitivity.setSingleStep(0.1)
+        self.perkey_sensitivity.setDecimals(1)
+        self.perkey_sensitivity.setValue(0.3)
+        settings_layout.addWidget(self.perkey_sensitivity, 1, 1)
+
+        # RT Release Sensitivity
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "RT Release (mm):")), 1, 2)
+        self.perkey_release = QDoubleSpinBox()
+        self.perkey_release.setRange(0.1, 4.0)
+        self.perkey_release.setSingleStep(0.1)
+        self.perkey_release.setDecimals(1)
+        self.perkey_release.setValue(0.3)
+        settings_layout.addWidget(self.perkey_release, 1, 3)
+
+        settings_group.setLayout(settings_layout)
+        perkey_layout.addWidget(settings_group)
+
+        # Apply buttons
+        apply_layout = QHBoxLayout()
+        apply_layout.addStretch()
+
+        self.btn_apply_perkey = QPushButton(
+            tr("AnalogMatrix", "Apply to Selected Keys")
+        )
+        self.btn_apply_perkey.clicked.connect(self._apply_perkey_settings)
+        apply_layout.addWidget(self.btn_apply_perkey)
+
+        self.btn_read_perkey = QPushButton(tr("AnalogMatrix", "Refresh from Keyboard"))
+        self.btn_read_perkey.clicked.connect(self._refresh_perkey_settings)
+        apply_layout.addWidget(self.btn_read_perkey)
+
+        perkey_layout.addLayout(apply_layout)
+
+        self.tabs.addTab(perkey_widget, tr("AnalogMatrix", "Per-Key"))
+
+    def _on_perkey_key_selected(self, key):
+        """Handle key selection in per-key tab."""
+        selected = self.actuation_keyboard.get_selected_keys()
+        self.perkey_selection_label.setText(
+            tr("AnalogMatrix", "Selected: {} keys").format(len(selected))
+        )
+
+        # If single key selected, load its settings
+        if len(selected) == 1:
+            row, col = selected[0]
+            settings = self.actuation_keyboard.get_key_setting(row, col)
+            if settings:
+                self._updating = True
+                idx = self.perkey_mode.findData(settings.get("mode", AKM_REGULAR))
+                if idx >= 0:
+                    self.perkey_mode.setCurrentIndex(idx)
+                self.perkey_actuation.setValue(
+                    settings.get("actuation_point", 20) / 10.0
+                )
+                self.perkey_sensitivity.setValue(settings.get("sensitivity", 3) / 10.0)
+                self.perkey_release.setValue(
+                    settings.get("release_sensitivity", 3) / 10.0
+                )
+                self._updating = False
+
+    def _on_perkey_key_deselected(self):
+        """Handle key deselection in per-key tab."""
+        self.perkey_selection_label.setText(tr("AnalogMatrix", "Selected: 0 keys"))
+
+    def _perkey_select_all(self):
+        """Select all keys."""
+        self.actuation_keyboard.select_all_keys()
+        selected = self.actuation_keyboard.get_selected_keys()
+        self.perkey_selection_label.setText(
+            tr("AnalogMatrix", "Selected: {} keys").format(len(selected))
+        )
+
+    def _perkey_deselect_all(self):
+        """Deselect all keys."""
+        self.actuation_keyboard.deselect_all_keys()
+        self.perkey_selection_label.setText(tr("AnalogMatrix", "Selected: 0 keys"))
+
+    def _apply_perkey_settings(self):
+        """Apply settings to selected keys."""
+        if not self.keyboard:
+            return
+
+        selected = self.actuation_keyboard.get_selected_keys()
+        if not selected:
+            QMessageBox.warning(
+                self.widget(),
+                tr("AnalogMatrix", "No Keys Selected"),
+                tr("AnalogMatrix", "Please select at least one key to apply settings."),
+            )
+            return
+
+        profile = self.profile_selector.currentData()
+        mode = self.perkey_mode.currentData()
+        act_pt = int(self.perkey_actuation.value() * 10)
+        sens = int(self.perkey_sensitivity.value() * 10)
+        rls_sens = int(self.perkey_release.value() * 10)
+
+        # Build row mask for selected keys
+        # Each row has a bitmask of columns
+        rows = self.keyboard.rows
+        cols = self.keyboard.cols
+        row_mask = [0] * ((cols + 7) // 8 * rows)  # bytes needed per row * rows
+
+        for row, col in selected:
+            if row < rows and col < cols:
+                byte_idx = row * ((cols + 7) // 8) + (col // 8)
+                bit_idx = col % 8
+                if byte_idx < len(row_mask):
+                    row_mask[byte_idx] |= 1 << bit_idx
+
+        # Apply to selected keys
+        success = self.keyboard.set_keychron_analog_travel(
+            profile, mode, act_pt, sens, rls_sens, entire=False, row_mask=row_mask
+        )
+
+        if success:
+            # Update local visualization
+            for row, col in selected:
+                self.actuation_keyboard.set_key_setting(
+                    row, col, mode, act_pt, sens, rls_sens
+                )
+            QMessageBox.information(
+                self.widget(),
+                tr("AnalogMatrix", "Applied"),
+                tr("AnalogMatrix", "Settings applied to {} keys.").format(
+                    len(selected)
+                ),
+            )
+        else:
+            QMessageBox.warning(
+                self.widget(),
+                tr("AnalogMatrix", "Error"),
+                tr("AnalogMatrix", "Failed to apply settings."),
+            )
+
+    def _refresh_perkey_settings(self):
+        """Refresh per-key settings from keyboard."""
+        if not self.keyboard:
+            return
+
+        # For now, we can't read individual key settings from the keyboard
+        # The Keychron protocol doesn't seem to have a per-key read command
+        # So we just reinitialize the keyboard widget
+        self._setup_actuation_keyboard()
+
+    def _setup_actuation_keyboard(self):
+        """Setup the actuation keyboard widget with current layout."""
+        if not self.keyboard:
+            return
+
+        # Get keyboard layout from the device
+        if hasattr(self.device, "layout"):
+            self.actuation_keyboard.set_keys(
+                self.device.layout.get("layouts", {}).get("keymap", []),
+                self.device.layout.get("layouts", {}).get("labels", []),
+            )
+
+        # Initialize with default settings for all keys
+        rows = getattr(self.keyboard, "rows", 6)
+        cols = getattr(self.keyboard, "cols", 20)
+
+        key_settings = {}
+        for row in range(rows):
+            for col in range(cols):
+                # Default to 2.0mm actuation, regular mode
+                key_settings[(row, col)] = {
+                    "mode": AKM_REGULAR,
+                    "actuation_point": 20,  # 2.0mm
+                    "sensitivity": 3,  # 0.3mm
+                    "release_sensitivity": 3,  # 0.3mm
+                }
+
+        self.actuation_keyboard.set_key_settings(key_settings)
+        self.actuation_keyboard.update()
+
     def valid(self):
         """Check if this tab should be shown."""
         if not isinstance(self.device, VialKeyboard):
@@ -441,6 +686,9 @@ class AnalogMatrixEditor(BasicEditor):
                 value = self.keyboard.keychron_analog_curve[i]
                 slider.setValue(value)
                 label.setText(str(value))
+
+        # Setup per-key actuation keyboard
+        self._setup_actuation_keyboard()
 
         self._updating = False
 

@@ -446,6 +446,10 @@ class ProtocolKeychron(BaseProtocol):
 
     def has_keychron_analog(self):
         """Check if Analog Matrix (Hall Effect) is supported."""
+        import os
+
+        if os.environ.get("DEBUG_FORCE_HE", "").lower() in ("1", "true", "yes"):
+            return True
         return bool(getattr(self, "keychron_features", 0) & FEATURE_ANALOG_MATRIX)
 
     # Debounce methods
