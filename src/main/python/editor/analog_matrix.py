@@ -84,9 +84,6 @@ class AnalogMatrixEditor(BasicEditor):
         # === Joystick Tab ===
         self._create_joystick_tab()
 
-        # === Per-Key Actuation Tab ===
-        self._create_perkey_tab()
-
         self._updating = False
 
     def _create_profile_tab(self):
@@ -145,77 +142,108 @@ class AnalogMatrixEditor(BasicEditor):
         self.tabs.addTab(profile_widget, tr("AnalogMatrix", "Profile"))
 
     def _create_global_settings_tab(self):
-        """Create the global actuation settings tab."""
+        """Create the actuation settings tab with keyboard visualization."""
         global_widget = QWidget()
         global_layout = QVBoxLayout()
         global_widget.setLayout(global_layout)
 
-        # Mode selection
-        mode_group = QGroupBox(tr("AnalogMatrix", "Key Mode"))
-        mode_layout = QHBoxLayout()
+        # Info label
+        info_label = QLabel(
+            tr(
+                "AnalogMatrix",
+                "Click keys to select them, then adjust settings below. "
+                "Hold Ctrl/Shift for multi-select. Use 'Apply to All' for global changes.",
+            )
+        )
+        info_label.setWordWrap(True)
+        global_layout.addWidget(info_label)
 
-        mode_layout.addWidget(QLabel(tr("AnalogMatrix", "Default Mode:")))
+        # Keyboard visualization widget
+        self.actuation_keyboard = ActuationKeyboardWidget(None)
+        self.actuation_keyboard.setMinimumHeight(250)
+        self.actuation_keyboard.key_selected.connect(self._on_perkey_key_selected)
+        self.actuation_keyboard.key_deselected.connect(self._on_perkey_key_deselected)
+        global_layout.addWidget(self.actuation_keyboard, 1)
+
+        # Selection controls
+        selection_layout = QHBoxLayout()
+
+        self.btn_select_all = QPushButton(tr("AnalogMatrix", "Select All"))
+        self.btn_select_all.clicked.connect(self._perkey_select_all)
+        selection_layout.addWidget(self.btn_select_all)
+
+        self.btn_deselect_all = QPushButton(tr("AnalogMatrix", "Deselect All"))
+        self.btn_deselect_all.clicked.connect(self._perkey_deselect_all)
+        selection_layout.addWidget(self.btn_deselect_all)
+
+        selection_layout.addStretch()
+
+        self.perkey_selection_label = QLabel(tr("AnalogMatrix", "Selected: 0 keys"))
+        selection_layout.addWidget(self.perkey_selection_label)
+
+        global_layout.addLayout(selection_layout)
+
+        # Settings group
+        settings_group = QGroupBox(tr("AnalogMatrix", "Actuation Settings"))
+        settings_layout = QGridLayout()
+
+        # Mode selection
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Mode:")), 0, 0)
         self.key_mode = QComboBox()
         for mode_id, name in AKM_MODE_NAMES.items():
             if mode_id in [AKM_GLOBAL, AKM_REGULAR, AKM_RAPID]:
                 self.key_mode.addItem(name, mode_id)
         self.key_mode.currentIndexChanged.connect(self.on_mode_changed)
-        mode_layout.addWidget(self.key_mode)
-        mode_layout.addStretch()
-
-        mode_group.setLayout(mode_layout)
-        global_layout.addWidget(mode_group)
-
-        # Actuation point settings
-        actuation_group = QGroupBox(tr("AnalogMatrix", "Actuation Settings"))
-        actuation_layout = QGridLayout()
+        settings_layout.addWidget(self.key_mode, 0, 1)
 
         # Actuation point (0.1mm units, range 1-40 = 0.1mm to 4.0mm)
-        actuation_layout.addWidget(
-            QLabel(tr("AnalogMatrix", "Actuation Point (mm):")), 0, 0
-        )
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Actuation (mm):")), 0, 2)
         self.actuation_point = QDoubleSpinBox()
         self.actuation_point.setRange(0.1, 4.0)
         self.actuation_point.setSingleStep(0.1)
         self.actuation_point.setDecimals(1)
+        self.actuation_point.setValue(2.0)
         self.actuation_point.valueChanged.connect(self.on_actuation_changed)
-        actuation_layout.addWidget(self.actuation_point, 0, 1)
+        settings_layout.addWidget(self.actuation_point, 0, 3)
 
         # Rapid Trigger sensitivity
-        actuation_layout.addWidget(
-            QLabel(tr("AnalogMatrix", "Rapid Trigger Sensitivity (mm):")), 1, 0
+        settings_layout.addWidget(
+            QLabel(tr("AnalogMatrix", "RT Sensitivity (mm):")), 1, 0
         )
         self.rt_sensitivity = QDoubleSpinBox()
         self.rt_sensitivity.setRange(0.1, 4.0)
         self.rt_sensitivity.setSingleStep(0.1)
         self.rt_sensitivity.setDecimals(1)
+        self.rt_sensitivity.setValue(0.3)
         self.rt_sensitivity.valueChanged.connect(self.on_actuation_changed)
-        actuation_layout.addWidget(self.rt_sensitivity, 1, 1)
+        settings_layout.addWidget(self.rt_sensitivity, 1, 1)
 
         # Rapid Trigger release sensitivity
-        actuation_layout.addWidget(
-            QLabel(tr("AnalogMatrix", "RT Release Sensitivity (mm):")), 2, 0
-        )
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "RT Release (mm):")), 1, 2)
         self.rt_release_sensitivity = QDoubleSpinBox()
         self.rt_release_sensitivity.setRange(0.1, 4.0)
         self.rt_release_sensitivity.setSingleStep(0.1)
         self.rt_release_sensitivity.setDecimals(1)
+        self.rt_release_sensitivity.setValue(0.3)
         self.rt_release_sensitivity.valueChanged.connect(self.on_actuation_changed)
-        actuation_layout.addWidget(self.rt_release_sensitivity, 2, 1)
+        settings_layout.addWidget(self.rt_release_sensitivity, 1, 3)
 
-        actuation_group.setLayout(actuation_layout)
-        global_layout.addWidget(actuation_group)
+        settings_group.setLayout(settings_layout)
+        global_layout.addWidget(settings_group)
 
-        # Apply button
+        # Apply buttons
         apply_layout = QHBoxLayout()
         apply_layout.addStretch()
+
+        self.btn_apply_selected = QPushButton(tr("AnalogMatrix", "Apply to Selected"))
+        self.btn_apply_selected.clicked.connect(self._apply_perkey_settings)
+        apply_layout.addWidget(self.btn_apply_selected)
 
         self.btn_apply_global = QPushButton(tr("AnalogMatrix", "Apply to All Keys"))
         self.btn_apply_global.clicked.connect(self.apply_global_settings)
         apply_layout.addWidget(self.btn_apply_global)
 
         global_layout.addLayout(apply_layout)
-        global_layout.addStretch()
 
         self.tabs.addTab(global_widget, tr("AnalogMatrix", "Actuation"))
 
@@ -395,107 +423,6 @@ class AnalogMatrixEditor(BasicEditor):
         joystick_layout.addStretch()
         self.tabs.addTab(joystick_widget, tr("AnalogMatrix", "Joystick"))
 
-    def _create_perkey_tab(self):
-        """Create the per-key actuation settings tab."""
-        perkey_widget = QWidget()
-        perkey_layout = QVBoxLayout()
-        perkey_widget.setLayout(perkey_layout)
-
-        info_label = QLabel(
-            tr(
-                "AnalogMatrix",
-                "Click on keys to select them, then adjust actuation settings below.\n"
-                "Hold Ctrl/Shift to select multiple keys. Use 'Select All' to modify all keys at once.",
-            )
-        )
-        info_label.setWordWrap(True)
-        perkey_layout.addWidget(info_label)
-
-        # Keyboard visualization widget
-        self.actuation_keyboard = ActuationKeyboardWidget(None)
-        self.actuation_keyboard.setMinimumHeight(300)
-        self.actuation_keyboard.key_selected.connect(self._on_perkey_key_selected)
-        self.actuation_keyboard.key_deselected.connect(self._on_perkey_key_deselected)
-        perkey_layout.addWidget(self.actuation_keyboard, 1)
-
-        # Selection controls
-        selection_layout = QHBoxLayout()
-
-        self.btn_select_all = QPushButton(tr("AnalogMatrix", "Select All"))
-        self.btn_select_all.clicked.connect(self._perkey_select_all)
-        selection_layout.addWidget(self.btn_select_all)
-
-        self.btn_deselect_all = QPushButton(tr("AnalogMatrix", "Deselect All"))
-        self.btn_deselect_all.clicked.connect(self._perkey_deselect_all)
-        selection_layout.addWidget(self.btn_deselect_all)
-
-        selection_layout.addStretch()
-
-        self.perkey_selection_label = QLabel(tr("AnalogMatrix", "Selected: 0 keys"))
-        selection_layout.addWidget(self.perkey_selection_label)
-
-        perkey_layout.addLayout(selection_layout)
-
-        # Per-key settings group
-        settings_group = QGroupBox(tr("AnalogMatrix", "Selected Key Settings"))
-        settings_layout = QGridLayout()
-
-        # Mode
-        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Mode:")), 0, 0)
-        self.perkey_mode = QComboBox()
-        for mode_id, name in AKM_MODE_NAMES.items():
-            if mode_id in [AKM_GLOBAL, AKM_REGULAR, AKM_RAPID]:
-                self.perkey_mode.addItem(name, mode_id)
-        settings_layout.addWidget(self.perkey_mode, 0, 1)
-
-        # Actuation point
-        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Actuation (mm):")), 0, 2)
-        self.perkey_actuation = QDoubleSpinBox()
-        self.perkey_actuation.setRange(0.1, 4.0)
-        self.perkey_actuation.setSingleStep(0.1)
-        self.perkey_actuation.setDecimals(1)
-        self.perkey_actuation.setValue(2.0)
-        settings_layout.addWidget(self.perkey_actuation, 0, 3)
-
-        # RT Sensitivity
-        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "RT Sens (mm):")), 1, 0)
-        self.perkey_sensitivity = QDoubleSpinBox()
-        self.perkey_sensitivity.setRange(0.1, 4.0)
-        self.perkey_sensitivity.setSingleStep(0.1)
-        self.perkey_sensitivity.setDecimals(1)
-        self.perkey_sensitivity.setValue(0.3)
-        settings_layout.addWidget(self.perkey_sensitivity, 1, 1)
-
-        # RT Release Sensitivity
-        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "RT Release (mm):")), 1, 2)
-        self.perkey_release = QDoubleSpinBox()
-        self.perkey_release.setRange(0.1, 4.0)
-        self.perkey_release.setSingleStep(0.1)
-        self.perkey_release.setDecimals(1)
-        self.perkey_release.setValue(0.3)
-        settings_layout.addWidget(self.perkey_release, 1, 3)
-
-        settings_group.setLayout(settings_layout)
-        perkey_layout.addWidget(settings_group)
-
-        # Apply buttons
-        apply_layout = QHBoxLayout()
-        apply_layout.addStretch()
-
-        self.btn_apply_perkey = QPushButton(
-            tr("AnalogMatrix", "Apply to Selected Keys")
-        )
-        self.btn_apply_perkey.clicked.connect(self._apply_perkey_settings)
-        apply_layout.addWidget(self.btn_apply_perkey)
-
-        self.btn_read_perkey = QPushButton(tr("AnalogMatrix", "Refresh from Keyboard"))
-        self.btn_read_perkey.clicked.connect(self._refresh_perkey_settings)
-        apply_layout.addWidget(self.btn_read_perkey)
-
-        perkey_layout.addLayout(apply_layout)
-
-        self.tabs.addTab(perkey_widget, tr("AnalogMatrix", "Per-Key"))
-
     def _on_perkey_key_selected(self, key):
         """Handle key selection in per-key tab."""
         selected = self.actuation_keyboard.get_selected_keys()
@@ -509,14 +436,14 @@ class AnalogMatrixEditor(BasicEditor):
             settings = self.actuation_keyboard.get_key_setting(row, col)
             if settings:
                 self._updating = True
-                idx = self.perkey_mode.findData(settings.get("mode", AKM_REGULAR))
+                idx = self.key_mode.findData(settings.get("mode", AKM_REGULAR))
                 if idx >= 0:
-                    self.perkey_mode.setCurrentIndex(idx)
-                self.perkey_actuation.setValue(
+                    self.key_mode.setCurrentIndex(idx)
+                self.actuation_point.setValue(
                     settings.get("actuation_point", 20) / 10.0
                 )
-                self.perkey_sensitivity.setValue(settings.get("sensitivity", 3) / 10.0)
-                self.perkey_release.setValue(
+                self.rt_sensitivity.setValue(settings.get("sensitivity", 3) / 10.0)
+                self.rt_release_sensitivity.setValue(
                     settings.get("release_sensitivity", 3) / 10.0
                 )
                 self._updating = False
@@ -553,10 +480,10 @@ class AnalogMatrixEditor(BasicEditor):
             return
 
         profile = self.profile_selector.currentData()
-        mode = self.perkey_mode.currentData()
-        act_pt = int(self.perkey_actuation.value() * 10)
-        sens = int(self.perkey_sensitivity.value() * 10)
-        rls_sens = int(self.perkey_release.value() * 10)
+        mode = self.key_mode.currentData()
+        act_pt = int(self.actuation_point.value() * 10)
+        sens = int(self.rt_sensitivity.value() * 10)
+        rls_sens = int(self.rt_release_sensitivity.value() * 10)
 
         # Build row mask for selected keys
         # Each row has a bitmask of columns
@@ -611,12 +538,10 @@ class AnalogMatrixEditor(BasicEditor):
         if not self.keyboard:
             return
 
-        # Get keyboard layout from the device
-        if hasattr(self.device, "layout"):
-            self.actuation_keyboard.set_keys(
-                self.device.layout.get("layouts", {}).get("keymap", []),
-                self.device.layout.get("layouts", {}).get("labels", []),
-            )
+        # Get keyboard layout from the keyboard object
+        if hasattr(self.keyboard, "keys"):
+            encoders = getattr(self.keyboard, "encoders", [])
+            self.actuation_keyboard.set_keys(self.keyboard.keys, encoders)
 
         # Initialize with default settings for all keys
         rows = getattr(self.keyboard, "rows", 6)
