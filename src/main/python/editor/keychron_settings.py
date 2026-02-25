@@ -125,9 +125,12 @@ class KeychronSettings(BasicEditor):
         self.wireless_group.setLayout(wireless_layout)
         container_layout.addWidget(self.wireless_group)
 
-        # Firmware info label
+        # Firmware info labels
         self.firmware_label = QLabel()
         container_layout.addWidget(self.firmware_label)
+
+        self.mcu_label = QLabel()
+        container_layout.addWidget(self.mcu_label)
 
         container_layout.addStretch()
 
@@ -228,6 +231,17 @@ class KeychronSettings(BasicEditor):
             self.firmware_label.setVisible(True)
         else:
             self.firmware_label.setVisible(False)
+
+        # Update MCU info label (from DFU_INFO_GET)
+        if self.keyboard.keychron_mcu_info:
+            self.mcu_label.setText(
+                tr("KeychronSettings", "MCU: {}").format(
+                    self.keyboard.keychron_mcu_info
+                )
+            )
+            self.mcu_label.setVisible(True)
+        else:
+            self.mcu_label.setVisible(False)
 
         self._updating = False
 

@@ -1,12 +1,28 @@
 from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout, QLabel, QPlainTextEdit
+from PyQt5.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QVBoxLayout,
+    QLabel,
+    QPlainTextEdit,
+)
 
-from protocol.constants import VIAL_PROTOCOL_DYNAMIC, VIAL_PROTOCOL_KEY_OVERRIDE, VIAL_PROTOCOL_ADVANCED_MACROS, \
-    VIAL_PROTOCOL_EXT_MACROS, VIAL_PROTOCOL_QMK_SETTINGS
+from protocol.constants import (
+    VIAL_PROTOCOL_DYNAMIC,
+    VIAL_PROTOCOL_KEY_OVERRIDE,
+    VIAL_PROTOCOL_ADVANCED_MACROS,
+    VIAL_PROTOCOL_EXT_MACROS,
+    VIAL_PROTOCOL_QMK_SETTINGS,
+)
+from protocol.keychron import (
+    AKM_MODE_NAMES,
+    DEBOUNCE_TYPE_NAMES,
+    REPORT_RATE_NAMES,
+    SNAP_CLICK_TYPE_NAMES,
+)
 
 
 class AboutKeyboard(QDialog):
-
     def want_min_vial_fw(self, ver):
         if self.keyboard.sideload:
             return "unsupported - sideloaded keyboard"
@@ -86,7 +102,9 @@ class AboutKeyboard(QDialog):
         text += "Macro entries: {}\n".format(self.keyboard.macro_count)
         text += "Macro memory: {} bytes\n".format(self.keyboard.macro_memory)
         text += "Macro delays: {}\n".format(self.about_macro_delays())
-        text += "Complex (2-byte) macro keycodes: {}\n".format(self.about_macro_ext_keycodes())
+        text += "Complex (2-byte) macro keycodes: {}\n".format(
+            self.about_macro_ext_keycodes()
+        )
         text += "\n"
 
         text += "Tap Dance entries: {}\n".format(self.about_tap_dance())
@@ -98,6 +116,93 @@ class AboutKeyboard(QDialog):
         text += "\n"
 
         text += "QMK Settings: {}\n".format(self.about_qmk_settings())
+
+        # Keychron features section
+        kb = self.keyboard
+        if hasattr(kb, "has_keychron_features") and kb.has_keychron_features():
+            text += "\n"
+            text += "--- Keychron Features ---\n"
+            text += "Firmware version: {}\n".format(
+                kb.keychron_firmware_version or "unknown"
+            )
+            text += "MCU: {}\n".format(kb.keychron_mcu_info or "unknown")
+            text += "Protocol version: {}\n".format(kb.keychron_protocol_version)
+            text += "\n"
+
+            # Debounce
+            if kb.has_keychron_debounce():
+                text += "Dynamic Debounce: yes\n"
+                text += "  Type: {}\n".format(
+                    DEBOUNCE_TYPE_NAMES.get(
+                        kb.keychron_debounce_type, str(kb.keychron_debounce_type)
+                    )
+                )
+                text += "  Time: {} ms\n".format(kb.keychron_debounce_time)
+            else:
+                text += "Dynamic Debounce: not supported\n"
+
+            # NKRO
+            if kb.has_keychron_nkro():
+                if kb.keychron_nkro_adaptive:
+                    text += "NKRO: adaptive (currently: {})\n".format(
+                        "enabled" if kb.keychron_nkro_enabled else "disabled"
+                    )
+                elif kb.keychron_nkro_supported:
+                    text += "NKRO: supported (enabled: {})\n".format(
+                        "yes" if kb.keychron_nkro_enabled else "no"
+                    )
+                else:
+                    text += "NKRO: not supported\n"
+            else:
+                text += "NKRO: not supported\n"
+
+            # Report rate
+            if kb.has_keychron_report_rate():
+                text += "USB Report Rate: yes\n"
+                text += "  Current: {}\n".format(
+                    REPORT_RATE_NAMES.get(
+                        kb.keychron_report_rate, str(kb.keychron_report_rate)
+                    )
+                )
+            else:
+                text += "USB Report Rate: not supported\n"
+
+            # Snap Click
+            if kb.has_keychron_snap_click():
+                text += "Snap Click (SOCD): yes\n"
+                text += "  Slots: {}\n".format(kb.keychron_snap_click_count)
+            else:
+                text += "Snap Click (SOCD): not supported\n"
+
+            # Wireless
+            if kb.has_keychron_wireless():
+                text += "Wireless LPM: yes\n"
+                text += "  Backlit timeout: {} s\n".format(
+                    kb.keychron_wireless_backlit_time
+                )
+                text += "  Idle timeout: {} s\n".format(kb.keychron_wireless_idle_time)
+            else:
+                text += "Wireless LPM: not supported\n"
+
+            # Per-key RGB
+            if kb.has_keychron_rgb():
+                text += "Keychron RGB: yes\n"
+                text += "  LED count: {}\n".format(kb.keychron_led_count)
+            else:
+                text += "Keychron RGB: not supported\n"
+
+            # Analog Matrix (Hall Effect)
+            if kb.has_keychron_analog():
+                text += "Analog Matrix (Hall Effect): yes\n"
+                text += "  AMC version: 0x{:08X}\n".format(kb.keychron_analog_version)
+                text += "  Profiles: {}\n".format(kb.keychron_analog_profile_count)
+                text += "  OKMC (DKS) slots: {}\n".format(kb.keychron_analog_okmc_count)
+                text += "  SOCD slots: {}\n".format(kb.keychron_analog_socd_count)
+                text += "  Game controller mode: {}\n".format(
+                    "enabled" if kb.keychron_analog_game_controller_mode else "disabled"
+                )
+            else:
+                text += "Analog Matrix (Hall Effect): not supported\n"
 
         font = QFont("monospace")
         font.setStyleHint(QFont.TypeWriter)

@@ -48,7 +48,12 @@ def hid_send(dev, msg, retries=1):
     while retries > 0:
         retries -= 1
         if not first:
-            time.sleep(0.5)
+            # emscripten (vial-web) runs single-threaded without ASYNCIFY;
+            # time.sleep() would call emscripten_sleep and crash the runtime.
+            # The JS spinlock in vialglue_read_device handles waiting, so
+            # skipping the sleep here is safe.
+            if sys.platform != "emscripten":
+                time.sleep(0.5)
         first = False
         try:
             # add 00 at start for hidapi report id
@@ -70,8 +75,11 @@ def hid_send(dev, msg, retries=1):
 def is_rawhid(desc, quiet):
     if desc["usage_page"] != 0xFF60 or desc["usage"] != 0x61:
         if not quiet:
-            logging.warning("is_rawhid: {} does not match - usage_page={:04X} usage={:02X}".format(
-                desc["path"], desc["usage_page"], desc["usage"]))
+            logging.warning(
+                "is_rawhid: {} does not match - usage_page={:04X} usage={:02X}".format(
+                    desc["path"], desc["usage_page"], desc["usage"]
+                )
+            )
         return False
 
     # there's no reason to check for permission issues on mac or windows
@@ -86,43 +94,72 @@ def is_rawhid(desc, quiet):
         dev.open_path(desc["path"])
     except OSError as e:
         if not quiet:
-            logging.warning("is_rawhid: {} does not match - open_path error {}".format(desc["path"], e))
+            logging.warning(
+                "is_rawhid: {} does not match - open_path error {}".format(
+                    desc["path"], e
+                )
+            )
         return False
 
     dev.close()
     return True
 
 
-def find_vial_devices(via_stack_json, sideload_vid=None, sideload_pid=None, quiet=False):
+def find_vial_devices(
+    via_stack_json, sideload_vid=None, sideload_pid=None, quiet=False
+):
     from vial_device import VialBootloader, VialKeyboard, VialDummyKeyboard
 
     filtered = []
     for dev in hid.enumerate():
         if dev["vendor_id"] == sideload_vid and dev["product_id"] == sideload_pid:
             if not quiet:
-                logging.info("Trying VID={:04X}, PID={:04X}, serial={}, path={} - sideload".format(
-                    dev["vendor_id"], dev["product_id"], dev["serial_number"], dev["path"]
-                ))
+                logging.info(
+                    "Trying VID={:04X}, PID={:04X}, serial={}, path={} - sideload".format(
+                        dev["vendor_id"],
+                        dev["product_id"],
+                        dev["serial_number"],
+                        dev["path"],
+                    )
+                )
             if is_rawhid(dev, quiet):
                 filtered.append(VialKeyboard(dev, sideload=True))
         elif VIAL_SERIAL_NUMBER_MAGIC in dev["serial_number"]:
             if not quiet:
-                logging.info("Matching VID={:04X}, PID={:04X}, serial={}, path={} - vial serial magic".format(
-                    dev["vendor_id"], dev["product_id"], dev["serial_number"], dev["path"]
-                ))
+                logging.info(
+                    "Matching VID={:04X}, PID={:04X}, serial={}, path={} - vial serial magic".format(
+                        dev["vendor_id"],
+                        dev["product_id"],
+                        dev["serial_number"],
+                        dev["path"],
+                    )
+                )
             if is_rawhid(dev, quiet):
                 filtered.append(VialKeyboard(dev))
         elif VIBL_SERIAL_NUMBER_MAGIC in dev["serial_number"]:
             if not quiet:
-                logging.info("Matching VID={:04X}, PID={:04X}, serial={}, path={} - vibl serial magic".format(
-                    dev["vendor_id"], dev["product_id"], dev["serial_number"], dev["path"]
-                ))
+                logging.info(
+                    "Matching VID={:04X}, PID={:04X}, serial={}, path={} - vibl serial magic".format(
+                        dev["vendor_id"],
+                        dev["product_id"],
+                        dev["serial_number"],
+                        dev["path"],
+                    )
+                )
             filtered.append(VialBootloader(dev))
-        elif str(dev["vendor_id"] * 65536 + dev["product_id"]) in via_stack_json["definitions"]:
+        elif (
+            str(dev["vendor_id"] * 65536 + dev["product_id"])
+            in via_stack_json["definitions"]
+        ):
             if not quiet:
-                logging.info("Matching VID={:04X}, PID={:04X}, serial={}, path={} - VIA stack".format(
-                    dev["vendor_id"], dev["product_id"], dev["serial_number"], dev["path"]
-                ))
+                logging.info(
+                    "Matching VID={:04X}, PID={:04X}, serial={}, path={} - VIA stack".format(
+                        dev["vendor_id"],
+                        dev["product_id"],
+                        dev["serial_number"],
+                        dev["path"],
+                    )
+                )
             if is_rawhid(dev, quiet):
                 filtered.append(VialKeyboard(dev, via_stack=True))
 
@@ -134,11 +171,11 @@ def find_vial_devices(via_stack_json, sideload_vid=None, sideload_pid=None, quie
 
 def chunks(data, sz):
     for i in range(0, len(data), sz):
-        yield data[i:i+sz]
+        yield data[i : i + sz]
 
 
 def pad_for_vibl(msg):
-    """ Pads message to vibl fixed 64-byte length """
+    """Pads message to vibl fixed 64-byte length"""
     if len(msg) > 64:
         raise RuntimeError("vibl message too long")
     return msg + b"\x00" * (64 - len(msg))
@@ -150,7 +187,11 @@ def init_logger():
     pathlib.Path(directory).mkdir(parents=True, exist_ok=True)
     path = os.path.join(directory, "vial.log")
     handler = RotatingFileHandler(path, maxBytes=5 * 1024 * 1024, backupCount=5)
-    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s"))
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s"
+        )
+    )
     logging.getLogger().addHandler(handler)
 
 
@@ -168,20 +209,19 @@ def make_scrollable(layout):
 
 
 class KeycodeDisplay:
-
     keymap_override = KEYMAPS[0][1]
     clients = []
 
     @classmethod
     def get_label(cls, code):
-        """ Get label for a specific keycode """
+        """Get label for a specific keycode"""
         if cls.code_is_overriden(code):
             return cls.keymap_override[Keycode.find_outer_keycode(code).qmk_id]
         return Keycode.label(code)
 
     @classmethod
     def code_is_overriden(cls, code):
-        """ Check whether a country-specific keymap overrides a code """
+        """Check whether a country-specific keymap overrides a code"""
         key = Keycode.find_outer_keycode(code)
         return key is not None and key.qmk_id in cls.keymap_override
 
@@ -231,7 +271,9 @@ class KeycodeDisplay:
             if qmk_id in KeycodeDisplay.keymap_override:
                 label = KeycodeDisplay.keymap_override[qmk_id]
                 highlight_color = QApplication.palette().color(QPalette.Link).getRgb()
-                widget.setStyleSheet("QPushButton {color: rgb%s;}" % str(highlight_color))
+                widget.setStyleSheet(
+                    "QPushButton {color: rgb%s;}" % str(highlight_color)
+                )
             else:
                 label = widget.keycode.label
                 widget.setStyleSheet("QPushButton {}")

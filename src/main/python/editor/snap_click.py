@@ -8,19 +8,15 @@ but for standard mechanical switches.
 """
 
 from PyQt5 import QtCore
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
-    QGridLayout,
     QLabel,
     QWidget,
-    QSizePolicy,
-    QGroupBox,
     QComboBox,
-    QPushButton,
     QScrollArea,
     QFrame,
-    QMessageBox,
 )
 
 from editor.basic_editor import BasicEditor
@@ -147,6 +143,12 @@ class SnapClickEditor(BasicEditor):
         self.entry_widgets = []
         self.pending_key_selection = None  # (entry_index, key_num)
 
+        # Debounce timer: auto-save to EEPROM 1 s after the last change
+        self._save_timer = QTimer()
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1000)
+        self._save_timer.timeout.connect(self._do_save)
+
         # Main container
         main_widget = QWidget()
         main_layout = QVBoxLayout()
@@ -176,16 +178,6 @@ class SnapClickEditor(BasicEditor):
         scroll.setWidget(self.entries_container)
 
         main_layout.addWidget(scroll, 1)
-
-        # Buttons
-        buttons_layout = QHBoxLayout()
-        buttons_layout.addStretch()
-
-        self.btn_save = QPushButton(tr("SnapClick", "Save to Keyboard"))
-        self.btn_save.clicked.connect(self.save_to_keyboard)
-        buttons_layout.addWidget(self.btn_save)
-
-        main_layout.addLayout(buttons_layout)
 
         # Center layout
         outer_layout = QVBoxLayout()
@@ -247,6 +239,7 @@ class SnapClickEditor(BasicEditor):
         self.keyboard.set_keychron_snap_click(
             entry_index, entry.get("type", 0), key1, key2
         )
+        self._schedule_save()
 
     def update_entry_type(self, entry_index, snap_type):
         """Update the SOCD type for an entry."""
@@ -259,21 +252,14 @@ class SnapClickEditor(BasicEditor):
         self.keyboard.set_keychron_snap_click(
             entry_index, snap_type, entry.get("key1", 0), entry.get("key2", 0)
         )
+        self._schedule_save()
 
-    def save_to_keyboard(self):
-        """Save all Snap Click settings to EEPROM."""
+    def _schedule_save(self):
+        """Schedule an EEPROM save 1 s after the last change (debounced)."""
+        self._save_timer.start()
+
+    def _do_save(self):
+        """Persist Snap Click settings to EEPROM (called by debounce timer)."""
         if not self.keyboard:
             return
-
-        if self.keyboard.save_keychron_snap_click():
-            QMessageBox.information(
-                self.widget(),
-                tr("SnapClick", "Saved"),
-                tr("SnapClick", "Snap Click settings saved to keyboard."),
-            )
-        else:
-            QMessageBox.warning(
-                self.widget(),
-                tr("SnapClick", "Error"),
-                tr("SnapClick", "Failed to save Snap Click settings."),
-            )
+        self.keyboard.save_keychron_snap_click()

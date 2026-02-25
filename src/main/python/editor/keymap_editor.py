@@ -15,7 +15,6 @@ from vial_device import VialKeyboard
 
 
 class ClickableWidget(QWidget):
-
     clicked = pyqtSignal()
 
     def mousePressEvent(self, evt):
@@ -24,7 +23,6 @@ class ClickableWidget(QWidget):
 
 
 class KeymapEditor(BasicEditor):
-
     def __init__(self, layout_editor):
         super().__init__()
 
@@ -38,6 +36,11 @@ class KeymapEditor(BasicEditor):
         layout_labels_container.addWidget(layer_label)
         layout_labels_container.addLayout(self.layout_layers)
         layout_labels_container.addStretch()
+
+        self.default_layer_label = QLabel()
+        self.default_layer_label.setVisible(False)
+        layout_labels_container.addWidget(self.default_layer_label)
+
         layout_labels_container.addLayout(self.layout_size)
 
         # contains the actual keyboard
@@ -94,7 +97,7 @@ class KeymapEditor(BasicEditor):
             btn.clicked.connect(lambda state, idx=x: self.switch_layer(idx))
             self.layout_layers.addWidget(btn)
             self.layer_buttons.append(btn)
-        for x in range(0,2):
+        for x in range(0, 2):
             btn = SquareButton("-") if x else SquareButton("+")
             btn.setFocusPolicy(Qt.NoFocus)
             btn.setCheckable(False)
@@ -120,6 +123,26 @@ class KeymapEditor(BasicEditor):
             self.container.set_keys(self.keyboard.keys, self.keyboard.encoders)
 
             self.current_layer = 0
+
+            # Auto-switch to DIP-switch default layer if supported
+            if (
+                hasattr(self.keyboard, "has_keychron_default_layer")
+                and self.keyboard.has_keychron_default_layer()
+            ):
+                default_layer = self.keyboard.get_keychron_default_layer()
+                if 0 <= default_layer < self.keyboard.layers:
+                    self.current_layer = default_layer
+                    self.default_layer_label.setText(
+                        tr("KeymapEditor", "DIP default: layer {}").format(
+                            default_layer
+                        )
+                    )
+                    self.default_layer_label.setVisible(True)
+                else:
+                    self.default_layer_label.setVisible(False)
+            else:
+                self.default_layer_label.setVisible(False)
+
             self.on_layout_changed()
 
             self.tabbed_keycodes.recreate_keycode_buttons()
@@ -135,10 +158,16 @@ class KeymapEditor(BasicEditor):
 
     def restore_layout(self, data):
         if json.loads(data.decode("utf-8")).get("uid") != self.keyboard.keyboard_id:
-            ret = QMessageBox.question(self.widget(), "",
-                                       tr("KeymapEditor", "Saved keymap belongs to a different keyboard,"
-                                                          " are you sure you want to continue?"),
-                                       QMessageBox.Yes | QMessageBox.No)
+            ret = QMessageBox.question(
+                self.widget(),
+                "",
+                tr(
+                    "KeymapEditor",
+                    "Saved keymap belongs to a different keyboard,"
+                    " are you sure you want to continue?",
+                ),
+                QMessageBox.Yes | QMessageBox.No,
+            )
             if ret != QMessageBox.Yes:
                 return
         self.keyboard.restore_layout(data)
@@ -163,13 +192,16 @@ class KeymapEditor(BasicEditor):
 
     def code_for_widget(self, widget):
         if widget.desc.row is not None:
-            return self.keyboard.layout[(self.current_layer, widget.desc.row, widget.desc.col)]
+            return self.keyboard.layout[
+                (self.current_layer, widget.desc.row, widget.desc.col)
+            ]
         else:
-            return self.keyboard.encoder_layout[(self.current_layer, widget.desc.encoder_idx,
-                                                 widget.desc.encoder_dir)]
+            return self.keyboard.encoder_layout[
+                (self.current_layer, widget.desc.encoder_idx, widget.desc.encoder_dir)
+            ]
 
     def refresh_layer_display(self):
-        """ Refresh text on key widgets to display data corresponding to current layer """
+        """Refresh text on key widgets to display data corresponding to current layer"""
 
         self.container.update_layout()
 
@@ -189,7 +221,7 @@ class KeymapEditor(BasicEditor):
         self.refresh_layer_display()
 
     def set_key(self, keycode):
-        """ Change currently selected key to provided keycode """
+        """Change currently selected key to provided keycode"""
 
         if self.container.active_key is None:
             return
@@ -202,8 +234,11 @@ class KeymapEditor(BasicEditor):
         self.container.select_next()
 
     def set_key_encoder(self, keycode):
-        l, i, d = self.current_layer, self.container.active_key.desc.encoder_idx,\
-                            self.container.active_key.desc.encoder_dir
+        l, i, d = (
+            self.current_layer,
+            self.container.active_key.desc.encoder_idx,
+            self.container.active_key.desc.encoder_dir,
+        )
 
         # if masked, ensure that this is a byte-sized keycode
         if self.container.active_mask:
@@ -218,7 +253,11 @@ class KeymapEditor(BasicEditor):
         self.refresh_layer_display()
 
     def set_key_matrix(self, keycode):
-        l, r, c = self.current_layer, self.container.active_key.desc.row, self.container.active_key.desc.col
+        l, r, c = (
+            self.current_layer,
+            self.container.active_key.desc.row,
+            self.container.active_key.desc.col,
+        )
 
         if r >= 0 and c >= 0:
             # if masked, ensure that this is a byte-sized keycode
@@ -234,7 +273,7 @@ class KeymapEditor(BasicEditor):
             self.refresh_layer_display()
 
     def on_key_clicked(self):
-        """ Called when a key on the keyboard widget is clicked """
+        """Called when a key on the keyboard widget is clicked"""
         self.refresh_layer_display()
         if self.container.active_mask:
             self.tabbed_keycodes.set_keycode_filter(keycode_filter_masked)

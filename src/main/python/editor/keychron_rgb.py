@@ -10,7 +10,7 @@ This editor handles:
 """
 
 from PyQt5 import QtCore
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QVBoxLayout,
@@ -131,6 +131,12 @@ class KeychronRGBEditor(BasicEditor):
         self.led_widgets = []
         self.rgb_effects = []  # List of available effects for this keyboard
 
+        # Debounce timer: auto-save to EEPROM 1 s after the last change
+        self._save_timer = QTimer()
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1000)
+        self._save_timer.timeout.connect(self._do_save)
+
         # === Global RGB Mode Control ===
         mode_group = QGroupBox(tr("KeychronRGB", "Global RGB Mode"))
         mode_layout = QGridLayout()
@@ -148,6 +154,12 @@ class KeychronRGBEditor(BasicEditor):
         self.rgb_brightness.setMaximum(255)
         self.rgb_brightness.valueChanged.connect(self.on_rgb_brightness_changed)
         mode_layout.addWidget(self.rgb_brightness, 0, 3)
+        self.rgb_brightness_label = QLabel("255")
+        self.rgb_brightness_label.setMinimumWidth(30)
+        self.rgb_brightness.valueChanged.connect(
+            lambda v: self.rgb_brightness_label.setText(str(v))
+        )
+        mode_layout.addWidget(self.rgb_brightness_label, 0, 4)
 
         # Speed slider
         mode_layout.addWidget(QLabel(tr("KeychronRGB", "Speed:")), 1, 0)
@@ -156,12 +168,18 @@ class KeychronRGBEditor(BasicEditor):
         self.rgb_speed.setMaximum(255)
         self.rgb_speed.valueChanged.connect(self.on_rgb_speed_changed)
         mode_layout.addWidget(self.rgb_speed, 1, 1)
+        self.rgb_speed_label = QLabel("128")
+        self.rgb_speed_label.setMinimumWidth(30)
+        self.rgb_speed.valueChanged.connect(
+            lambda v: self.rgb_speed_label.setText(str(v))
+        )
+        mode_layout.addWidget(self.rgb_speed_label, 1, 2)
 
         # Color button
-        mode_layout.addWidget(QLabel(tr("KeychronRGB", "Color:")), 1, 2)
+        mode_layout.addWidget(QLabel(tr("KeychronRGB", "Color:")), 1, 3)
         self.rgb_color = ColorButton()
         self.rgb_color.color_changed.connect(self.on_rgb_color_changed)
-        mode_layout.addWidget(self.rgb_color, 1, 3)
+        mode_layout.addWidget(self.rgb_color, 1, 4)
 
         mode_group.setLayout(mode_layout)
         self.addWidget(mode_group)
@@ -249,7 +267,7 @@ class KeychronRGBEditor(BasicEditor):
 
         # Checkboxes for each indicator
         indicators_grid.addWidget(
-            QLabel(tr("KeychronRGB", "Disable indicators:")), 0, 0
+            QLabel(tr("KeychronRGB", "Suppress LED indicator for:")), 0, 0
         )
 
         self.indicator_numlock = QCheckBox(tr("KeychronRGB", "Num Lock"))
@@ -379,14 +397,7 @@ class KeychronRGBEditor(BasicEditor):
         mixed_layout.addWidget(effects_group)
 
         self.tabs.addTab(mixed_widget, tr("KeychronRGB", "Mixed RGB"))
-
-        # Save button
-        buttons_layout = QHBoxLayout()
-        buttons_layout.addStretch()
-        self.btn_save = QPushButton(tr("KeychronRGB", "Save to Keyboard"))
-        self.btn_save.clicked.connect(self.save_to_keyboard)
-        buttons_layout.addWidget(self.btn_save)
-        self.addLayout(buttons_layout)
+        
 
         self._updating = False
 
@@ -588,6 +599,7 @@ class KeychronRGBEditor(BasicEditor):
             if hasattr(self.keyboard, "set_vialrgb_mode"):
                 self._ensure_rgb_defaults()
                 self.keyboard.set_vialrgb_mode(mode_id)
+                self._schedule_save()
             else:
                 logging.warning("KeychronRGB: set_vialrgb_mode not available")
 
@@ -599,6 +611,7 @@ class KeychronRGBEditor(BasicEditor):
         if hasattr(self.keyboard, "set_vialrgb_brightness"):
             self._ensure_rgb_defaults()
             self.keyboard.set_vialrgb_brightness(value)
+            self._schedule_save()
         else:
             logging.warning("KeychronRGB: set_vialrgb_brightness not available")
 
@@ -610,6 +623,7 @@ class KeychronRGBEditor(BasicEditor):
         if hasattr(self.keyboard, "set_vialrgb_speed"):
             self._ensure_rgb_defaults()
             self.keyboard.set_vialrgb_speed(value)
+            self._schedule_save()
         else:
             logging.warning("KeychronRGB: set_vialrgb_speed not available")
 
@@ -623,6 +637,7 @@ class KeychronRGBEditor(BasicEditor):
             # Keep current brightness value
             current_v = self.keyboard.rgb_hsv[2] if self.keyboard.rgb_hsv else 255
             self.keyboard.set_vialrgb_color(h, s, current_v)
+            self._schedule_save()
         else:
             logging.warning("KeychronRGB: set_vialrgb_color not available")
 
@@ -690,6 +705,8 @@ class KeychronRGBEditor(BasicEditor):
         for led_idx in led_indices:
             self.keyboard.set_keychron_per_key_color(led_idx, h, s, v)
             self.rgb_keyboard.set_led_color(led_idx, h, s, v)
+        if led_indices:
+            self._schedule_save()
 
     def on_effect_type_changed(self):
         """Handle effect type change."""
@@ -697,6 +714,7 @@ class KeychronRGBEditor(BasicEditor):
             return
         effect_type = self.effect_type.currentData()
         self.keyboard.set_keychron_per_key_rgb_type(effect_type)
+        self._schedule_save()
 
     def on_indicator_changed(self):
         """Handle indicator checkbox change."""
@@ -723,24 +741,17 @@ class KeychronRGBEditor(BasicEditor):
         self.keyboard.set_keychron_os_indicator_config(
             mask, self.indicator_color.h, self.indicator_color.s, self.indicator_color.v
         )
+        self._schedule_save()
 
-    def save_to_keyboard(self):
-        """Save RGB settings to EEPROM."""
+    def _schedule_save(self):
+        """Schedule an EEPROM save 1 s after the last change (debounced)."""
+        self._save_timer.start()
+
+    def _do_save(self):
+        """Persist RGB settings to EEPROM (called by debounce timer)."""
         if not self.keyboard:
             return
-
-        if self.keyboard.save_keychron_rgb():
-            QMessageBox.information(
-                self.widget(),
-                tr("KeychronRGB", "Saved"),
-                tr("KeychronRGB", "RGB settings saved to keyboard."),
-            )
-        else:
-            QMessageBox.warning(
-                self.widget(),
-                tr("KeychronRGB", "Error"),
-                tr("KeychronRGB", "Failed to save RGB settings."),
-            )
+        self.keyboard.save_keychron_rgb()
 
     # === Mixed RGB Methods ===
 
@@ -999,6 +1010,7 @@ class KeychronRGBEditor(BasicEditor):
         ):
             # Update visualization
             self._update_mixed_keyboard_colors()
+            self._schedule_save()
         else:
             QMessageBox.warning(
                 self.widget(),
@@ -1078,3 +1090,4 @@ class KeychronRGBEditor(BasicEditor):
 
         # Send updated effect to keyboard
         self.keyboard.set_mixed_rgb_effect_list(region, slot, [eff])
+        self._schedule_save()

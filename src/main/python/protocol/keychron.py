@@ -246,6 +246,9 @@ class ProtocolKeychron(BaseProtocol):
         self.keychron_protocol_version = 0
         self.keychron_misc_protocol_version = 0
         self.keychron_firmware_version = ""
+        self.keychron_mcu_info = (
+            ""  # MCU chip name from DFU_INFO_GET (e.g. "STM32L432")
+        )
 
         # Debounce settings
         self.keychron_debounce_type = DEBOUNCE_SYM_DEFER_GLOBAL
@@ -353,6 +356,25 @@ class ProtocolKeychron(BaseProtocol):
                 "Keychron: Firmware version: %s", self.keychron_firmware_version
             )
 
+        # Get MCU chip info via DFU_INFO_GET
+        # Response: data[2]=success, data[3]=DFU_INFO_CHIP(1), data[4]=len, data[5..5+len]=MCU string
+        data = self.usb_send(
+            self.dev,
+            struct.pack("BB", KC_MISC_CMD_GROUP, DFU_INFO_GET),
+            retries=3,
+        )
+        if (
+            data[0] == KC_MISC_CMD_GROUP
+            and data[1] == DFU_INFO_GET
+            and data[2] == 0  # success
+            and data[3] == 1  # DFU_INFO_CHIP tag
+        ):
+            chip_len = data[4]
+            self.keychron_mcu_info = data[5 : 5 + chip_len].decode(
+                "utf-8", errors="ignore"
+            )
+            logging.info("Keychron: MCU chip: %s", self.keychron_mcu_info)
+
         # Get misc protocol version and features
         data = self.usb_send(
             self.dev,
@@ -451,6 +473,24 @@ class ProtocolKeychron(BaseProtocol):
         if os.environ.get("DEBUG_FORCE_HE", "").lower() in ("1", "true", "yes"):
             return True
         return bool(getattr(self, "keychron_features", 0) & FEATURE_ANALOG_MATRIX)
+
+    def has_keychron_default_layer(self):
+        """Check if KC_GET_DEFAULT_LAYER is supported."""
+        return bool(getattr(self, "keychron_features", 0) & FEATURE_DEFAULT_LAYER)
+
+    def get_keychron_default_layer(self):
+        """
+        Query the keyboard for the current default layer (set by DIP switch).
+
+        Returns:
+            int: Default layer index, or -1 on failure.
+        """
+        data = self.usb_send(
+            self.dev, struct.pack("B", KC_GET_DEFAULT_LAYER), retries=3
+        )
+        if data[0] == KC_GET_DEFAULT_LAYER:
+            return data[1]
+        return -1
 
     # Debounce methods
     def _reload_debounce(self):
@@ -738,10 +778,11 @@ class ProtocolKeychron(BaseProtocol):
             and data[2] == KC_SUCCESS
         ):
             self.keychron_os_indicator_config = {
-                "disable_mask": data[3],
-                "hue": data[4],
-                "sat": data[5],
-                "val": data[6],
+                "available_mask": data[3],
+                "disable_mask": data[4],
+                "hue": data[5],
+                "sat": data[6],
+                "val": data[7],
             }
 
         # Get per-key colors (in batches of 9)
@@ -844,7 +885,12 @@ class ProtocolKeychron(BaseProtocol):
             and data[1] == SET_INDICATORS_CONFIG
             and data[2] == KC_SUCCESS
         ):
+            # Preserve available_mask (read-only from firmware) when updating cache
+            available_mask = (self.keychron_os_indicator_config or {}).get(
+                "available_mask", 0
+            )
             self.keychron_os_indicator_config = {
+                "available_mask": available_mask,
                 "disable_mask": disable_mask,
                 "hue": h,
                 "sat": s,
@@ -1123,7 +1169,9 @@ class ProtocolKeychron(BaseProtocol):
             self.dev, struct.pack("BB", KC_ANALOG_MATRIX, AMC_GET_VERSION), retries=3
         )
         if data[0] == KC_ANALOG_MATRIX and data[1] == AMC_GET_VERSION:
-            self.keychron_analog_version = struct.unpack("<I", data[2:6])[0]
+            self.keychron_analog_version = data[
+                2
+            ]  # firmware writes 1 byte: KC_ANALOG_MATRIX_VERSION & 0xFF
 
         # Get profiles info
         data = self.usb_send(
@@ -1185,7 +1233,19 @@ class ProtocolKeychron(BaseProtocol):
     def set_keychron_analog_travel(
         self, profile, mode, act_pt, sens, rls_sens, entire=True, row_mask=None
     ):
-        """Set analog travel/actuation settings."""
+        """
+        Set analog travel/actuation settings.
+
+        Args:
+            profile: Profile index
+            mode: AKM_GLOBAL / AKM_REGULAR / AKM_RAPID
+            act_pt: Actuation point in 0.1mm units (1-39)
+            sens: Rapid Trigger press sensitivity in 0.1mm units
+            rls_sens: Rapid Trigger release sensitivity in 0.1mm units
+            entire: If True, apply to all keys; if False use row_mask
+            row_mask: List of per-row 24-bit column bitmasks (one int per row).
+                      Firmware reads 3 bytes per row via memcpy.
+        """
         if entire:
             # Apply globally
             data = self.usb_send(
@@ -1205,7 +1265,8 @@ class ProtocolKeychron(BaseProtocol):
                 retries=3,
             )
         else:
-            # Apply to specific keys using row_mask
+            # Apply to specific keys using row_mask.
+            # Firmware expects MATRIX_ROWS * 3 bytes: 3 LE bytes per row (24-bit col bitmask).
             packet = struct.pack(
                 "BBBBBBBB",
                 KC_ANALOG_MATRIX,
@@ -1215,10 +1276,12 @@ class ProtocolKeychron(BaseProtocol):
                 act_pt,
                 sens,
                 rls_sens,
-                0,
+                0,  # entire=0
             )
             if row_mask:
-                packet += bytes(row_mask)
+                # row_mask is a list of ints (one per row, each a 24-bit col bitmask)
+                for mask in row_mask:
+                    packet += struct.pack("<I", mask & 0xFFFFFF)[:3]
             data = self.usb_send(self.dev, packet, retries=3)
         return (
             data[0] == KC_ANALOG_MATRIX
@@ -1347,19 +1410,34 @@ class ProtocolKeychron(BaseProtocol):
         )
 
     def get_keychron_calibration_state(self):
-        """Get current calibration state."""
+        """
+        Get current calibration state.
+
+        Firmware response layout for AMC_GET_CALIBRATE_STATE:
+          data[2] = calibrated bitmask (bit0=CALI_ZERO_TRAVEL, bit1=CALI_FULL_TRAVEL)
+                    NOTE: this is NOT a success/fail code
+          data[3] = cali_state enum (current calibration state)
+          data[4..] = calib_state_matrix rows (3 bytes each, 24-bit col bitmask)
+
+        Returns:
+            Dict with keys:
+              - calibrated: bitmask of which calibrations are done
+              - state: current cali_state enum value
+            or None on failure.
+        """
         data = self.usb_send(
             self.dev,
             struct.pack("BB", KC_ANALOG_MATRIX, AMC_GET_CALIBRATE_STATE),
             retries=3,
         )
-        if (
-            data[0] == KC_ANALOG_MATRIX
-            and data[1] == AMC_GET_CALIBRATE_STATE
-            and data[2] == KC_SUCCESS
-        ):
-            return data[3]
-        return CALIB_OFF
+        if data[0] == KC_ANALOG_MATRIX and data[1] == AMC_GET_CALIBRATE_STATE:
+            return {
+                "calibrated": data[
+                    2
+                ],  # bitmask: bit0=zero calibrated, bit1=full calibrated
+                "state": data[3],  # current calibration state enum
+            }
+        return None
 
     def get_keychron_analog_profile_raw(self, profile, offset=0, size=32):
         """
@@ -1393,22 +1471,19 @@ class ProtocolKeychron(BaseProtocol):
         data = self.usb_send(
             self.dev,
             struct.pack(
-                "<BBBBHB",
+                "BBBBBB",
                 KC_ANALOG_MATRIX,
                 AMC_GET_PROFILE_RAW,
                 profile,
-                0,  # reserved
-                offset,
-                size,
+                offset & 0xFF,  # data[3] = offset LSB (firmware: (data[4]<<8)|data[3])
+                (offset >> 8) & 0xFF,  # data[4] = offset MSB
+                size,  # data[5] = size
             ),
             retries=3,
         )
-        if (
-            data[0] == KC_ANALOG_MATRIX
-            and data[1] == AMC_GET_PROFILE_RAW
-            and data[2] == KC_SUCCESS
-        ):
-            # data[3] = profile, data[4:6] = offset, data[6:] = raw data
+        if data[0] == KC_ANALOG_MATRIX and data[1] == AMC_GET_PROFILE_RAW:
+            # Firmware does NOT set data[2]=success for this command — data[2] stays as
+            # the echoed profile index. Data starts at data[6].
             return bytes(data[6 : 6 + size])
         return None
 
@@ -1560,17 +1635,22 @@ class ProtocolKeychron(BaseProtocol):
         # Calculate offset to SOCD data in profile
         # Profile structure: global(4) + keys(rows*cols*4) + okmc(okmc_count*?) + socd
         # For now, we'll use a simpler approach - read from known offset
-        # Each socd_config_t is 5 bytes: type(1) + key1_row(1) + key1_col(1) + key2_row(1) + key2_col(1)
+        # Each socd_config_t is 3 bytes (packed bitfields):
+        #   byte0: key_1_row:3 (bits 2:0), key_1_col:5 (bits 7:3)
+        #   byte1: key_2_row:3 (bits 2:0), key_2_col:5 (bits 7:3)
+        #   byte2: type
 
         # The SOCD section starts after global + per-key configs + OKMC configs
         # Since OKMC size varies, we'll calculate based on profile size
         global_size = 4
         per_key_size = rows * cols * 4
         okmc_count = getattr(self, "keychron_analog_okmc_count", 0)
-        okmc_size = okmc_count * 20  # Each OKMC is 20 bytes
+        okmc_size = (
+            okmc_count * 19
+        )  # Each okmc_config_t is 19 bytes: travel(3) + keycode[4](8) + action[4](8)
 
         socd_offset = global_size + per_key_size + okmc_size
-        socd_data_size = socd_count * 5
+        socd_data_size = socd_count * 3
 
         # Read SOCD data
         all_data = bytearray()
@@ -1578,7 +1658,7 @@ class ProtocolKeychron(BaseProtocol):
         remaining = socd_data_size
 
         while remaining > 0:
-            chunk_size = min(25, remaining)  # 5 SOCD entries at a time
+            chunk_size = min(24, remaining)  # 8 SOCD entries (3 bytes each) at a time
             chunk = self.get_keychron_analog_profile_raw(profile, offset, chunk_size)
             if not chunk:
                 break
@@ -1586,18 +1666,24 @@ class ProtocolKeychron(BaseProtocol):
             offset += chunk_size
             remaining -= chunk_size
 
-        # Parse SOCD pairs
+        # Parse SOCD pairs from packed bitfield structs
         socd_pairs = []
         for i in range(socd_count):
-            idx = i * 5
-            if idx + 5 <= len(all_data):
+            idx = i * 3
+            if idx + 3 <= len(all_data):
+                b0 = all_data[idx]
+                b1 = all_data[idx + 1]
+                b2 = all_data[idx + 2]
+                # socd_config_t packed bitfield layout:
+                # byte0: key_1_row:3 (bits 2:0), key_1_col:5 (bits 7:3)
+                # byte1: key_2_row:3 (bits 2:0), key_2_col:5 (bits 7:3)
                 socd_pairs.append(
                     {
-                        "type": all_data[idx],
-                        "row1": all_data[idx + 1],
-                        "col1": all_data[idx + 2],
-                        "row2": all_data[idx + 3],
-                        "col2": all_data[idx + 4],
+                        "type": b2,
+                        "row1": b0 & 0x07,
+                        "col1": (b0 >> 3) & 0x1F,
+                        "row2": b1 & 0x07,
+                        "col2": (b1 >> 3) & 0x1F,
                     }
                 )
             else:
@@ -1612,3 +1698,364 @@ class ProtocolKeychron(BaseProtocol):
                 )
 
         return socd_pairs
+
+    def get_keychron_analog_profile_name(self, profile):
+        """
+        Read the profile name string from a profile's raw data.
+
+        Profile name is stored at:
+          offset = 4 + rows*cols*4 + okmc_count*19 + socd_count*3
+          length = PROFILE_NAME_LEN (30 bytes, last 2 are CRC so actual name ≤ 28)
+
+        Returns:
+            str: Profile name (stripped of null bytes), or "" on failure.
+        """
+        rows = getattr(self, "rows", 0)
+        cols = getattr(self, "cols", 0)
+        okmc_count = getattr(self, "keychron_analog_okmc_count", 0)
+        socd_count = getattr(self, "keychron_analog_socd_count", 0)
+
+        name_offset = 4 + rows * cols * 4 + okmc_count * 19 + socd_count * 3
+        # Read up to 28 bytes (firmware max name len excl. CRC)
+        name_data = self.get_keychron_analog_profile_raw(profile, name_offset, 28)
+        if not name_data:
+            return ""
+        return name_data.split(b"\x00")[0].decode("utf-8", errors="ignore")
+
+    def set_keychron_analog_profile_name(self, profile, name):
+        """
+        Set the name for a profile.
+
+        Args:
+            profile: Profile index (0-based)
+            name: str, max 28 characters (firmware limit: PROFILE_NAME_LEN-2)
+
+        Returns:
+            True on success.
+        """
+        name_bytes = name.encode("utf-8")[:28]
+        name_len = len(name_bytes)
+        packet = struct.pack(
+            "BBBB", KC_ANALOG_MATRIX, AMC_SET_PROFILE_NAME, profile, name_len
+        )
+        packet += name_bytes
+        data = self.usb_send(self.dev, packet, retries=3)
+        return (
+            data[0] == KC_ANALOG_MATRIX
+            and data[1] == AMC_SET_PROFILE_NAME
+            and data[2] == KC_SUCCESS
+        )
+
+    def set_keychron_analog_advance_mode_clear(self, profile, row, col):
+        """
+        Clear advance mode (DKS/Gamepad/Toggle) from a key, reverting it to regular/rapid.
+
+        Args:
+            profile: Profile index
+            row, col: Key matrix position
+
+        Returns:
+            True on success.
+        """
+        packet = struct.pack(
+            "BBBBBBB",
+            KC_ANALOG_MATRIX,
+            AMC_SET_ADVANCE_MODE,
+            profile,
+            ADV_MODE_CLEAR,
+            row,
+            col,
+            0,  # index (unused for clear)
+        )
+        data = self.usb_send(self.dev, packet, retries=3)
+        return (
+            data[0] == KC_ANALOG_MATRIX
+            and data[1] == AMC_SET_ADVANCE_MODE
+            and data[2] == KC_SUCCESS
+        )
+
+    def set_keychron_analog_advance_mode_dks(
+        self,
+        profile,
+        row,
+        col,
+        okmc_index,
+        shallow_act,
+        shallow_deact,
+        deep_act,
+        deep_deact,
+        keycodes,
+        actions,
+    ):
+        """
+        Set Dynamic Keystroke (DKS/OKMC) advance mode on a key.
+
+        HID packet layout (confirmed from firmware profile_set_adv_mode):
+          [0xA9][0x15][prof][ADV_MODE_OKMC=1][row][col][okmc_index]
+          [shallow_act][shallow_deact][deep_act][deep_deact]
+          [kc0_lo][kc0_hi][kc1_lo][kc1_hi][kc2_lo][kc2_hi][kc3_lo][kc3_hi]
+          [action0_byte0][action0_byte1][action1_byte0][action1_byte1]
+          [action2_byte0][action2_byte1][action3_byte0][action3_byte1]
+
+        Args:
+            profile: Profile index
+            row, col: Key matrix position
+            okmc_index: Which OKMC slot to use (0 to okmc_count-1)
+            shallow_act/deact, deep_act/deact: Travel thresholds in 0.1mm (0-63)
+            keycodes: list of 4 uint16 HID keycodes
+            actions: list of 4 dicts, each with keys:
+                     shallow_act, shallow_deact, deep_act, deep_deact (each 0-15)
+
+        Returns:
+            True on success.
+        """
+        # Build okmc_traval_config_t (3 bytes, packed bitfields):
+        # byte0: shallow_act:6 [5:0] | shallow_deact[1:0] [7:6]
+        # byte1: shallow_deact[3:2] [3:0] | deep_act[3:0] [7:4]  (wait — see actual layout)
+        # Actual layout (from struct definition):
+        # shallow_act:6 @ bits[5:0]   of byte0
+        # shallow_deact:6 @ bits[11:6] spanning byte0[7:6] + byte1[3:0]
+        # deep_act:6    @ bits[17:12] spanning byte1[7:4] + byte2[1:0]
+        # deep_deact:6  @ bits[23:18] spanning byte2[7:2]
+        sa = shallow_act & 0x3F
+        sd = shallow_deact & 0x3F
+        da = deep_act & 0x3F
+        dd = deep_deact & 0x3F
+        travel_b0 = sa | ((sd & 0x03) << 6)
+        travel_b1 = ((sd >> 2) & 0x0F) | ((da & 0x0F) << 4)
+        travel_b2 = ((da >> 4) & 0x03) | (dd << 2)
+
+        packet = struct.pack(
+            "BBBBBBB",
+            KC_ANALOG_MATRIX,
+            AMC_SET_ADVANCE_MODE,
+            profile,
+            ADV_MODE_OKMC,
+            row,
+            col,
+            okmc_index,
+        )
+        # Travel config (3 bytes)
+        packet += bytes([travel_b0, travel_b1, travel_b2])
+        # Keycodes (4 × uint16 LE)
+        for kc in (list(keycodes) + [0, 0, 0, 0])[:4]:
+            packet += struct.pack("<H", kc & 0xFFFF)
+        # Actions (4 × okmc_action_t = 4 × 2 bytes)
+        # Each action: byte0 = shallow_act:4 [3:0] | shallow_deact:4 [7:4]
+        #              byte1 = deep_act:4    [3:0] | deep_deact:4    [7:4]
+        for act in (list(actions) + [{}, {}, {}, {}])[:4]:
+            b0 = (act.get("shallow_act", 0) & 0x0F) | (
+                (act.get("shallow_deact", 0) & 0x0F) << 4
+            )
+            b1 = (act.get("deep_act", 0) & 0x0F) | (
+                (act.get("deep_deact", 0) & 0x0F) << 4
+            )
+            packet += bytes([b0, b1])
+
+        data = self.usb_send(self.dev, packet, retries=3)
+        return (
+            data[0] == KC_ANALOG_MATRIX
+            and data[1] == AMC_SET_ADVANCE_MODE
+            and data[2] == KC_SUCCESS
+        )
+
+    def set_keychron_analog_advance_mode_gamepad(self, profile, row, col, js_axis):
+        """
+        Set Gamepad axis advance mode on a key.
+
+        Args:
+            profile: Profile index
+            row, col: Key matrix position
+            js_axis: Joystick axis index
+
+        Returns:
+            True on success.
+        """
+        packet = struct.pack(
+            "BBBBBBB",
+            KC_ANALOG_MATRIX,
+            AMC_SET_ADVANCE_MODE,
+            profile,
+            ADV_MODE_GAME_CONTROLLER,
+            row,
+            col,
+            js_axis,
+        )
+        data = self.usb_send(self.dev, packet, retries=3)
+        return (
+            data[0] == KC_ANALOG_MATRIX
+            and data[1] == AMC_SET_ADVANCE_MODE
+            and data[2] == KC_SUCCESS
+        )
+
+    def set_keychron_analog_advance_mode_toggle(self, profile, row, col):
+        """
+        Set Toggle advance mode on a key.
+
+        Args:
+            profile: Profile index
+            row, col: Key matrix position
+
+        Returns:
+            True on success.
+        """
+        packet = struct.pack(
+            "BBBBBBB",
+            KC_ANALOG_MATRIX,
+            AMC_SET_ADVANCE_MODE,
+            profile,
+            ADV_MODE_TOGGLE,
+            row,
+            col,
+            0,  # index unused
+        )
+        data = self.usb_send(self.dev, packet, retries=3)
+        return (
+            data[0] == KC_ANALOG_MATRIX
+            and data[1] == AMC_SET_ADVANCE_MODE
+            and data[2] == KC_SUCCESS
+        )
+
+    def get_keychron_analog_calibrated_value(self, row, col):
+        """
+        Get calibrated zero/full travel values for a specific key.
+
+        Firmware response:
+          data[2] = echoed row
+          data[3] = echoed col
+          data[4] = status (0=success, 1=fail)
+          data[5] = zero_travel & 0xFF
+          data[6] = (zero_travel >> 8) & 0xFF
+          data[7] = full_travel & 0xFF
+          data[8] = (full_travel >> 8) & 0xFF
+          data[9..12] = scale_factor as 4-byte IEEE 754 float
+
+        Args:
+            row, col: Key matrix position
+
+        Returns:
+            Dict with keys: zero_travel, full_travel, scale_factor
+            or None on failure.
+        """
+        data = self.usb_send(
+            self.dev,
+            struct.pack("BBBB", KC_ANALOG_MATRIX, AMC_GET_CALIBRATED_VALUE, row, col),
+            retries=3,
+        )
+        if (
+            data[0] == KC_ANALOG_MATRIX
+            and data[1] == AMC_GET_CALIBRATED_VALUE
+            and data[4] == KC_SUCCESS  # status is at data[4]
+        ):
+            zero_travel = data[5] | (data[6] << 8)
+            full_travel = data[7] | (data[8] << 8)
+            scale_factor = struct.unpack_from("<f", data, 9)[0]
+            return {
+                "zero_travel": zero_travel,
+                "full_travel": full_travel,
+                "scale_factor": scale_factor,
+            }
+        return None
+
+    def get_keychron_analog_okmc_configs(self, profile):
+        """
+        Read all OKMC (DKS) slot configurations from a profile.
+
+        Each okmc_config_t is 19 bytes:
+          - okmc_traval_config_t travel (3 bytes, packed bitfields)
+          - uint16_t keycode[4] (8 bytes, 4 × LE uint16)
+          - okmc_action_t action[4] (8 bytes, 4 × 2 bytes)
+
+        Travel bitfield layout:
+          byte0: shallow_act:6 [5:0], shallow_deact[1:0] [7:6]
+          byte1: shallow_deact[3:2] [3:0], deep_act[3:0] [7:4]
+          byte2: deep_act[5:4] [1:0], deep_deact:6 [7:2]
+
+        Action bitfield layout (each action is 2 bytes):
+          byte0: shallow_act:4 [3:0], shallow_deact:4 [7:4]
+          byte1: deep_act:4    [3:0], deep_deact:4    [7:4]
+
+        Returns:
+            List of okmc config dicts, one per OKMC slot:
+            {
+              "shallow_act": int,   # 0-63 in 0.1mm units
+              "shallow_deact": int,
+              "deep_act": int,
+              "deep_deact": int,
+              "keycodes": [kc0, kc1, kc2, kc3],  # HID keycodes (uint16)
+              "actions": [
+                {"shallow_act": 0-15, "shallow_deact": 0-15,
+                 "deep_act": 0-15, "deep_deact": 0-15},
+                ...  (4 total)
+              ]
+            }
+            or None on failure.
+        """
+        rows = getattr(self, "rows", 0)
+        cols = getattr(self, "cols", 0)
+        okmc_count = getattr(self, "keychron_analog_okmc_count", 0)
+        if okmc_count == 0:
+            return []
+
+        okmc_offset = 4 + rows * cols * 4
+        okmc_total = okmc_count * 19
+
+        # Read all OKMC data
+        all_data = bytearray()
+        offset = okmc_offset
+        remaining = okmc_total
+
+        while remaining > 0:
+            chunk_size = min(19, remaining)  # read one slot at a time to stay aligned
+            chunk = self.get_keychron_analog_profile_raw(profile, offset, chunk_size)
+            if not chunk:
+                logging.warning("Failed to read OKMC config at offset %d", offset)
+                return None
+            all_data.extend(chunk)
+            offset += chunk_size
+            remaining -= chunk_size
+
+        result = []
+        for i in range(okmc_count):
+            base = i * 19
+            if base + 19 > len(all_data):
+                break
+
+            # Parse travel (3 bytes)
+            tb0 = all_data[base]
+            tb1 = all_data[base + 1]
+            tb2 = all_data[base + 2]
+            shallow_act = tb0 & 0x3F
+            shallow_deact = ((tb0 >> 6) & 0x03) | ((tb1 & 0x0F) << 2)
+            deep_act = ((tb1 >> 4) & 0x0F) | ((tb2 & 0x03) << 4)
+            deep_deact = (tb2 >> 2) & 0x3F
+
+            # Parse keycodes (4 × uint16 LE starting at base+3)
+            keycodes = list(struct.unpack_from("<HHHH", all_data, base + 3))
+
+            # Parse actions (4 × 2 bytes starting at base+11)
+            actions = []
+            for j in range(4):
+                ab0 = all_data[base + 11 + j * 2]
+                ab1 = all_data[base + 12 + j * 2]
+                actions.append(
+                    {
+                        "shallow_act": ab0 & 0x0F,
+                        "shallow_deact": (ab0 >> 4) & 0x0F,
+                        "deep_act": ab1 & 0x0F,
+                        "deep_deact": (ab1 >> 4) & 0x0F,
+                    }
+                )
+
+            result.append(
+                {
+                    "shallow_act": shallow_act,
+                    "shallow_deact": shallow_deact,
+                    "deep_act": deep_act,
+                    "deep_deact": deep_deact,
+                    "keycodes": keycodes,
+                    "actions": actions,
+                }
+            )
+
+        return result

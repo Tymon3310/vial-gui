@@ -34,6 +34,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QDoubleSpinBox,
     QProgressBar,
+    QLineEdit,
 )
 
 from editor.basic_editor import BasicEditor
@@ -43,6 +44,8 @@ from protocol.keychron import (
     AKM_REGULAR,
     AKM_RAPID,
     AKM_DKS,
+    AKM_GAMEPAD,
+    AKM_TOGGLE,
     SOCD_TYPE_NAMES,
     SOCD_PRI_NONE,
     CALIB_OFF,
@@ -83,6 +86,9 @@ class AnalogMatrixEditor(BasicEditor):
         # === Joystick Tab ===
         self._create_joystick_tab()
 
+        # === DKS Tab ===
+        self._create_dks_tab()
+
         self._updating = False
 
     def _create_profile_tab(self):
@@ -111,6 +117,22 @@ class AnalogMatrixEditor(BasicEditor):
         profile_group_layout.addStretch()
         profile_group.setLayout(profile_group_layout)
         profile_layout.addWidget(profile_group)
+
+        # Profile name editor
+        name_group = QGroupBox(tr("AnalogMatrix", "Profile Name"))
+        name_layout = QHBoxLayout()
+        name_layout.addWidget(QLabel(tr("AnalogMatrix", "Name:")))
+        self.profile_name_edit = QLineEdit()
+        self.profile_name_edit.setMaxLength(28)
+        self.profile_name_edit.setPlaceholderText(
+            tr("AnalogMatrix", "Enter profile name (max 28 chars)")
+        )
+        name_layout.addWidget(self.profile_name_edit)
+        self.btn_set_name = QPushButton(tr("AnalogMatrix", "Set Name"))
+        self.btn_set_name.clicked.connect(self._apply_profile_name)
+        name_layout.addWidget(self.btn_set_name)
+        name_group.setLayout(name_layout)
+        profile_layout.addWidget(name_group)
 
         # Profile info
         info_group = QGroupBox(tr("AnalogMatrix", "Profile Information"))
@@ -190,14 +212,16 @@ class AnalogMatrixEditor(BasicEditor):
         settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Mode:")), 0, 0)
         self.key_mode = QComboBox()
         for mode_id, name in AKM_MODE_NAMES.items():
-            if mode_id in [AKM_GLOBAL, AKM_REGULAR, AKM_RAPID]:
-                self.key_mode.addItem(name, mode_id)
+            self.key_mode.addItem(name, mode_id)
         self.key_mode.setToolTip(
             tr(
                 "AnalogMatrix",
                 "Global: Use profile default settings\n"
                 "Regular: Fixed actuation point\n"
-                "Rapid Trigger: Dynamic actuation based on key travel direction",
+                "Rapid Trigger: Dynamic actuation based on key travel direction\n"
+                "Dynamic Keystroke: Multi-action DKS (configure in DKS tab)\n"
+                "Gamepad: Analog joystick axis assignment\n"
+                "Toggle: Key toggles on/off each press",
             )
         )
         self.key_mode.currentIndexChanged.connect(self.on_mode_changed)
@@ -253,6 +277,22 @@ class AnalogMatrixEditor(BasicEditor):
         )
         self.rt_release_sensitivity.valueChanged.connect(self.on_actuation_changed)
         settings_layout.addWidget(self.rt_release_sensitivity, 1, 3)
+
+        # Gamepad axis (shown only when mode=Gamepad)
+        settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Joystick Axis:")), 2, 0)
+        self.gamepad_axis = QSpinBox()
+        self.gamepad_axis.setRange(0, 15)
+        self.gamepad_axis.setToolTip(
+            tr("AnalogMatrix", "Joystick axis index to assign to this key (0-15)")
+        )
+        settings_layout.addWidget(self.gamepad_axis, 2, 1)
+
+        self._gamepad_row_widgets = [
+            settings_layout.itemAtPosition(2, 0).widget()
+            if settings_layout.itemAtPosition(2, 0)
+            else None,
+            self.gamepad_axis,
+        ]
 
         settings_group.setLayout(settings_layout)
         global_layout.addWidget(settings_group)
@@ -353,6 +393,13 @@ class AnalogMatrixEditor(BasicEditor):
         self.btn_calib_clear.clicked.connect(
             lambda: self.start_calibration(CALIB_CLEAR)
         )
+        self.btn_calib_clear.setEnabled(False)
+        self.btn_calib_clear.setToolTip(
+            tr(
+                "AnalogMatrix",
+                "Not supported by current firmware (CALIB_CLEAR always fails)",
+            )
+        )
         buttons_layout.addWidget(self.btn_calib_clear)
 
         calib_group_layout.addLayout(buttons_layout)
@@ -394,8 +441,173 @@ class AnalogMatrixEditor(BasicEditor):
         realtime_group.setLayout(realtime_layout)
         calib_layout.addWidget(realtime_group)
 
+        # Calibrated value readout group
+        calval_group = QGroupBox(tr("AnalogMatrix", "Read Calibrated Values"))
+        calval_layout = QGridLayout()
+
+        calval_layout.addWidget(QLabel(tr("AnalogMatrix", "Row:")), 0, 0)
+        self.calval_row = QSpinBox()
+        self.calval_row.setRange(0, 20)
+        calval_layout.addWidget(self.calval_row, 0, 1)
+
+        calval_layout.addWidget(QLabel(tr("AnalogMatrix", "Col:")), 0, 2)
+        self.calval_col = QSpinBox()
+        self.calval_col.setRange(0, 24)
+        calval_layout.addWidget(self.calval_col, 0, 3)
+
+        self.btn_read_calval = QPushButton(tr("AnalogMatrix", "Read"))
+        self.btn_read_calval.clicked.connect(self._read_calibrated_value)
+        calval_layout.addWidget(self.btn_read_calval, 0, 4)
+
+        self.calval_result = QLabel(tr("AnalogMatrix", "Zero: — | Full: — | Scale: —"))
+        calval_layout.addWidget(self.calval_result, 1, 0, 1, 5)
+
+        calval_group.setLayout(calval_layout)
+        calib_layout.addWidget(calval_group)
+
         calib_layout.addStretch()
         self.tabs.addTab(calib_widget, tr("AnalogMatrix", "Calibration"))
+
+    def _create_dks_tab(self):
+        """Create the DKS (Dynamic Keystroke / OKMC) configuration tab."""
+        dks_widget = QWidget()
+        dks_layout = QVBoxLayout()
+        dks_widget.setLayout(dks_layout)
+
+        info_label = QLabel(
+            tr(
+                "AnalogMatrix",
+                "Dynamic Keystroke (DKS) allows assigning up to 4 keycodes to a key,\n"
+                "triggered at different travel depths (shallow press/release, deep press/release).\n"
+                "Select a DKS slot, configure the travel thresholds and keycodes, then click Apply.",
+            )
+        )
+        info_label.setWordWrap(True)
+        dks_layout.addWidget(info_label)
+
+        # Slot selector
+        slot_layout = QHBoxLayout()
+        slot_layout.addWidget(QLabel(tr("AnalogMatrix", "DKS Slot:")))
+        self.dks_slot_selector = QComboBox()
+        self.dks_slot_selector.currentIndexChanged.connect(self._on_dks_slot_changed)
+        slot_layout.addWidget(self.dks_slot_selector)
+        slot_layout.addStretch()
+        dks_layout.addLayout(slot_layout)
+
+        # Travel thresholds group
+        travel_group = QGroupBox(
+            tr("AnalogMatrix", "Travel Thresholds (0.1 mm units, 0-6.3 mm)")
+        )
+        travel_layout = QGridLayout()
+
+        travel_layout.addWidget(QLabel(tr("AnalogMatrix", "Shallow Act:")), 0, 0)
+        self.dks_shallow_act = QDoubleSpinBox()
+        self.dks_shallow_act.setRange(0.0, 6.3)
+        self.dks_shallow_act.setSingleStep(0.1)
+        self.dks_shallow_act.setDecimals(1)
+        self.dks_shallow_act.setSuffix(" mm")
+        travel_layout.addWidget(self.dks_shallow_act, 0, 1)
+
+        travel_layout.addWidget(QLabel(tr("AnalogMatrix", "Shallow Deact:")), 0, 2)
+        self.dks_shallow_deact = QDoubleSpinBox()
+        self.dks_shallow_deact.setRange(0.0, 6.3)
+        self.dks_shallow_deact.setSingleStep(0.1)
+        self.dks_shallow_deact.setDecimals(1)
+        self.dks_shallow_deact.setSuffix(" mm")
+        travel_layout.addWidget(self.dks_shallow_deact, 0, 3)
+
+        travel_layout.addWidget(QLabel(tr("AnalogMatrix", "Deep Act:")), 1, 0)
+        self.dks_deep_act = QDoubleSpinBox()
+        self.dks_deep_act.setRange(0.0, 6.3)
+        self.dks_deep_act.setSingleStep(0.1)
+        self.dks_deep_act.setDecimals(1)
+        self.dks_deep_act.setSuffix(" mm")
+        travel_layout.addWidget(self.dks_deep_act, 1, 1)
+
+        travel_layout.addWidget(QLabel(tr("AnalogMatrix", "Deep Deact:")), 1, 2)
+        self.dks_deep_deact = QDoubleSpinBox()
+        self.dks_deep_deact.setRange(0.0, 6.3)
+        self.dks_deep_deact.setSingleStep(0.1)
+        self.dks_deep_deact.setDecimals(1)
+        self.dks_deep_deact.setSuffix(" mm")
+        travel_layout.addWidget(self.dks_deep_deact, 1, 3)
+
+        travel_group.setLayout(travel_layout)
+        dks_layout.addWidget(travel_group)
+
+        # Keycodes group — 4 HID keycode spinboxes (hex display)
+        kc_group = QGroupBox(tr("AnalogMatrix", "Keycodes (HID hex)"))
+        kc_layout = QGridLayout()
+        self.dks_keycodes = []
+        for i in range(4):
+            kc_layout.addWidget(QLabel(tr("AnalogMatrix", "KC{}:").format(i)), 0, i * 2)
+            kc_edit = QLineEdit("0x0000")
+            kc_edit.setMaxLength(6)
+            kc_edit.setToolTip(
+                tr("AnalogMatrix", "HID keycode in hex, e.g. 0x0004 for 'A'")
+            )
+            kc_layout.addWidget(kc_edit, 1, i * 2)
+            self.dks_keycodes.append(kc_edit)
+        kc_group.setLayout(kc_layout)
+        dks_layout.addWidget(kc_group)
+
+        # Actions group — 4 actions, each with 4 nibble (0-15) combos
+        # Action meaning: which keycode fires on each of the 4 events
+        ACTION_EVENT_NAMES = ["Shallow Act", "Shallow Deact", "Deep Act", "Deep Deact"]
+        ACT_CHOICES = {i: str(i) if i > 0 else "None (0)" for i in range(16)}
+
+        actions_group = QGroupBox(
+            tr("AnalogMatrix", "Actions (keycode index 0-3 per event, 0=none)")
+        )
+        actions_layout = QGridLayout()
+
+        # Header row
+        for j, ev in enumerate(ACTION_EVENT_NAMES):
+            actions_layout.addWidget(QLabel(tr("AnalogMatrix", ev)), 0, j + 1)
+
+        self.dks_actions = []  # list of 4 dicts of 4 QSpinBox
+        for i in range(4):
+            actions_layout.addWidget(
+                QLabel(tr("AnalogMatrix", "KC{}:").format(i)), i + 1, 0
+            )
+            row_spins = []
+            for j in range(4):
+                spin = QSpinBox()
+                spin.setRange(0, 15)
+                spin.setToolTip(
+                    tr(
+                        "AnalogMatrix",
+                        "Keycode index (0-3) triggered on this event, or 0 for none",
+                    )
+                )
+                actions_layout.addWidget(spin, i + 1, j + 1)
+                row_spins.append(spin)
+            self.dks_actions.append(row_spins)
+
+        actions_group.setLayout(actions_layout)
+        dks_layout.addWidget(actions_group)
+
+        # Apply / assign-to-key buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        self.btn_dks_assign = QPushButton(
+            tr("AnalogMatrix", "Assign DKS to Selected Key")
+        )
+        self.btn_dks_assign.setToolTip(
+            tr(
+                "AnalogMatrix",
+                "Apply this DKS slot config to the firmware and assign it\n"
+                "to all keys currently selected in the Actuation tab.",
+            )
+        )
+        self.btn_dks_assign.clicked.connect(self._apply_dks_to_selected)
+        btn_layout.addWidget(self.btn_dks_assign)
+
+        dks_layout.addLayout(btn_layout)
+        dks_layout.addStretch()
+
+        self.tabs.addTab(dks_widget, tr("AnalogMatrix", "DKS"))
 
     def _create_joystick_tab(self):
         """Create the joystick/gamepad settings tab."""
@@ -513,22 +725,87 @@ class AnalogMatrixEditor(BasicEditor):
 
         profile = self.profile_selector.currentData()
         mode = self.key_mode.currentData()
+
+        # Special advance modes: route to set_keychron_analog_advance_mode_*
+        if mode == AKM_GAMEPAD:
+            js_axis = self.gamepad_axis.value()
+            errors = []
+            for row, col in selected:
+                ok = self.keyboard.set_keychron_analog_advance_mode_gamepad(
+                    profile, row, col, js_axis
+                )
+                if not ok:
+                    errors.append((row, col))
+            if errors:
+                QMessageBox.warning(
+                    self.tabs,
+                    tr("AnalogMatrix", "Error"),
+                    tr(
+                        "AnalogMatrix", "Failed to set Gamepad mode on {} key(s)."
+                    ).format(len(errors)),
+                )
+            else:
+                QMessageBox.information(
+                    self.tabs,
+                    tr("AnalogMatrix", "Applied"),
+                    tr("AnalogMatrix", "Gamepad axis {} assigned to {} key(s).").format(
+                        js_axis, len(selected)
+                    ),
+                )
+            return
+
+        if mode == AKM_TOGGLE:
+            errors = []
+            for row, col in selected:
+                ok = self.keyboard.set_keychron_analog_advance_mode_toggle(
+                    profile, row, col
+                )
+                if not ok:
+                    errors.append((row, col))
+            if errors:
+                QMessageBox.warning(
+                    self.tabs,
+                    tr("AnalogMatrix", "Error"),
+                    tr(
+                        "AnalogMatrix", "Failed to set Toggle mode on {} key(s)."
+                    ).format(len(errors)),
+                )
+            else:
+                QMessageBox.information(
+                    self.tabs,
+                    tr("AnalogMatrix", "Applied"),
+                    tr("AnalogMatrix", "Toggle mode applied to {} key(s).").format(
+                        len(selected)
+                    ),
+                )
+            return
+
+        if mode == AKM_DKS:
+            QMessageBox.information(
+                self.tabs,
+                tr("AnalogMatrix", "Use DKS Tab"),
+                tr(
+                    "AnalogMatrix",
+                    "To assign DKS, configure the slot in the DKS tab and click "
+                    "'Assign DKS to Selected Key' there.",
+                ),
+            )
+            return
+
         act_pt = int(self.actuation_point.value() * 10)
         sens = int(self.rt_sensitivity.value() * 10)
         rls_sens = int(self.rt_release_sensitivity.value() * 10)
 
-        # Build row mask for selected keys
-        # Each row has a bitmask of columns
+        # Build per-row 24-bit column bitmasks for selected keys.
+        # Firmware expects row_mask[MATRIX_ROWS], each a 24-bit LE value
+        # (3 bytes per row via memcpy).
         rows = self.keyboard.rows
         cols = self.keyboard.cols
-        row_mask = [0] * ((cols + 7) // 8 * rows)  # bytes needed per row * rows
+        row_mask = [0] * rows  # one int (24-bit col bitmask) per row
 
         for row, col in selected:
-            if row < rows and col < cols:
-                byte_idx = row * ((cols + 7) // 8) + (col // 8)
-                bit_idx = col % 8
-                if byte_idx < len(row_mask):
-                    row_mask[byte_idx] |= 1 << bit_idx
+            if row < rows and col < cols and col < 24:
+                row_mask[row] |= 1 << col
 
         # Apply to selected keys
         success = self.keyboard.set_keychron_analog_travel(
@@ -724,6 +1001,168 @@ class AnalogMatrixEditor(BasicEditor):
             return False
         return kb.has_keychron_analog()
 
+    def _apply_profile_name(self):
+        """Send the profile name to the keyboard."""
+        if not self.keyboard:
+            return
+        profile = self.profile_selector.currentData()
+        if profile is None:
+            return
+        name = self.profile_name_edit.text().strip()
+        if self.keyboard.set_keychron_analog_profile_name(profile, name):
+            QMessageBox.information(
+                self.tabs,
+                tr("AnalogMatrix", "Name Set"),
+                tr("AnalogMatrix", "Profile {} name updated.").format(profile + 1),
+            )
+        else:
+            QMessageBox.warning(
+                self.tabs,
+                tr("AnalogMatrix", "Error"),
+                tr("AnalogMatrix", "Failed to set profile name."),
+            )
+
+    def _on_dks_slot_changed(self):
+        """Load DKS slot settings from keyboard when slot selection changes."""
+        if self._updating or not self.keyboard:
+            return
+        profile = self.profile_selector.currentData()
+        if profile is None:
+            return
+        slot = self.dks_slot_selector.currentData()
+        if slot is None:
+            return
+        okmc_configs = None
+        try:
+            okmc_configs = self.keyboard.get_keychron_analog_okmc_configs(profile)
+        except Exception:
+            pass
+        if not okmc_configs or slot >= len(okmc_configs):
+            return
+        cfg = okmc_configs[slot]
+        self._updating = True
+        self.dks_shallow_act.setValue(cfg["shallow_act"] / 10.0)
+        self.dks_shallow_deact.setValue(cfg["shallow_deact"] / 10.0)
+        self.dks_deep_act.setValue(cfg["deep_act"] / 10.0)
+        self.dks_deep_deact.setValue(cfg["deep_deact"] / 10.0)
+        for i, kc_edit in enumerate(self.dks_keycodes):
+            kc = cfg["keycodes"][i] if i < len(cfg["keycodes"]) else 0
+            kc_edit.setText(f"0x{kc:04X}")
+        for i, row_spins in enumerate(self.dks_actions):
+            act = cfg["actions"][i] if i < len(cfg["actions"]) else {}
+            row_spins[0].setValue(act.get("shallow_act", 0))
+            row_spins[1].setValue(act.get("shallow_deact", 0))
+            row_spins[2].setValue(act.get("deep_act", 0))
+            row_spins[3].setValue(act.get("deep_deact", 0))
+        self._updating = False
+
+    def _apply_dks_to_selected(self):
+        """Apply DKS config from the DKS tab to selected keys in the Actuation tab."""
+        if not self.keyboard:
+            return
+        profile = self.profile_selector.currentData()
+        if profile is None:
+            profile = 0
+        slot = self.dks_slot_selector.currentData()
+        if slot is None:
+            slot = 0
+
+        # Parse travel thresholds (convert mm back to 0.1mm int)
+        shallow_act = int(round(self.dks_shallow_act.value() * 10))
+        shallow_deact = int(round(self.dks_shallow_deact.value() * 10))
+        deep_act = int(round(self.dks_deep_act.value() * 10))
+        deep_deact = int(round(self.dks_deep_deact.value() * 10))
+
+        # Parse keycodes
+        keycodes = []
+        for kc_edit in self.dks_keycodes:
+            try:
+                keycodes.append(int(kc_edit.text(), 16))
+            except ValueError:
+                keycodes.append(0)
+
+        # Parse actions
+        actions = []
+        for row_spins in self.dks_actions:
+            actions.append(
+                {
+                    "shallow_act": row_spins[0].value(),
+                    "shallow_deact": row_spins[1].value(),
+                    "deep_act": row_spins[2].value(),
+                    "deep_deact": row_spins[3].value(),
+                }
+            )
+
+        # Get selected keys from Actuation tab widget
+        selected = self.actuation_keyboard.get_selected_keys()
+        if not selected:
+            QMessageBox.warning(
+                self.tabs,
+                tr("AnalogMatrix", "No Keys Selected"),
+                tr("AnalogMatrix", "Select keys in the Actuation tab first."),
+            )
+            return
+
+        errors = []
+        for row, col in selected:
+            ok = self.keyboard.set_keychron_analog_advance_mode_dks(
+                profile,
+                row,
+                col,
+                slot,
+                shallow_act,
+                shallow_deact,
+                deep_act,
+                deep_deact,
+                keycodes,
+                actions,
+            )
+            if not ok:
+                errors.append((row, col))
+
+        if errors:
+            QMessageBox.warning(
+                self.tabs,
+                tr("AnalogMatrix", "Error"),
+                tr("AnalogMatrix", "Failed to apply DKS to {} key(s).").format(
+                    len(errors)
+                ),
+            )
+        else:
+            QMessageBox.information(
+                self.tabs,
+                tr("AnalogMatrix", "Applied"),
+                tr("AnalogMatrix", "DKS slot {} applied to {} key(s).").format(
+                    slot, len(selected)
+                ),
+            )
+
+    def _read_calibrated_value(self):
+        """Read and display the calibrated zero/full travel values for a key."""
+        if not self.keyboard:
+            return
+        row = self.calval_row.value()
+        col = self.calval_col.value()
+        result = None
+        try:
+            result = self.keyboard.get_keychron_analog_calibrated_value(row, col)
+        except Exception:
+            pass
+        if result:
+            self.calval_result.setText(
+                tr("AnalogMatrix", "Zero: {} | Full: {} | Scale: {:.4f}").format(
+                    result["zero_travel"],
+                    result["full_travel"],
+                    result["scale_factor"],
+                )
+            )
+        else:
+            self.calval_result.setText(
+                tr(
+                    "AnalogMatrix", "Failed to read calibrated values for ({}, {})."
+                ).format(row, col)
+            )
+
     def rebuild(self, device):
         super().rebuild(device)
         if not self.valid():
@@ -769,8 +1208,24 @@ class AnalogMatrixEditor(BasicEditor):
         # Setup per-key actuation keyboard
         self._setup_actuation_keyboard()
 
-        # Populate SOCD tab
+        # Populate SOCD tab with firmware data
         self._rebuild_socd_tab()
+        self._populate_socd_from_firmware()
+
+        # Populate DKS slot selector
+        self.dks_slot_selector.clear()
+        for i in range(self.keyboard.keychron_analog_okmc_count):
+            self.dks_slot_selector.addItem(
+                tr("AnalogMatrix", "Slot {}").format(i + 1), i
+            )
+
+        # Load profile name
+        profile = self.keyboard.keychron_analog_current_profile
+        try:
+            name = self.keyboard.get_keychron_analog_profile_name(profile)
+            self.profile_name_edit.setText(name)
+        except Exception:
+            self.profile_name_edit.setText("")
 
         self._updating = False
 
@@ -779,8 +1234,48 @@ class AnalogMatrixEditor(BasicEditor):
         if self._updating or not self.keyboard:
             return
         profile = self.profile_selector.currentData()
-        if profile is not None:
-            self.keyboard.select_keychron_analog_profile(profile)
+        if profile is None:
+            return
+        self.keyboard.select_keychron_analog_profile(profile)
+        # Reload profile name
+        try:
+            name = self.keyboard.get_keychron_analog_profile_name(profile)
+            self.profile_name_edit.setText(name)
+        except Exception:
+            self.profile_name_edit.setText("")
+        # Reload SOCD from firmware for this profile
+        self._populate_socd_from_firmware()
+        # Reload DKS slot 0 if available
+        if self.dks_slot_selector.count() > 0:
+            self.dks_slot_selector.setCurrentIndex(0)
+            self._on_dks_slot_changed()
+
+    def _populate_socd_from_firmware(self):
+        """Pre-populate SOCD widgets with values read from the keyboard."""
+        if not self.keyboard or not hasattr(self, "socd_widgets"):
+            return
+        profile = self.profile_selector.currentData()
+        if profile is None:
+            profile = 0
+        socd_pairs = None
+        try:
+            socd_pairs = self.keyboard.get_keychron_analog_socd_pairs(profile)
+        except Exception:
+            return
+        if not socd_pairs:
+            return
+        for i, widgets in enumerate(self.socd_widgets):
+            if i < len(socd_pairs):
+                pair = socd_pairs[i]
+                self._updating = True
+                widgets["row1"].setValue(pair.get("row1", 0))
+                widgets["col1"].setValue(pair.get("col1", 0))
+                widgets["row2"].setValue(pair.get("row2", 0))
+                widgets["col2"].setValue(pair.get("col2", 0))
+                idx = widgets["type"].findData(pair.get("type", SOCD_PRI_NONE))
+                if idx >= 0:
+                    widgets["type"].setCurrentIndex(idx)
+                self._updating = False
 
     def save_current_profile(self):
         """Save current profile to EEPROM."""
@@ -821,10 +1316,15 @@ class AnalogMatrixEditor(BasicEditor):
                 self.keyboard.reset_keychron_analog_profile(profile)
 
     def on_mode_changed(self):
-        """Handle key mode change."""
+        """Handle key mode change — show/hide Gamepad axis row."""
         if self._updating:
             return
-        # Mode is applied when "Apply to All Keys" is clicked
+        mode = self.key_mode.currentData()
+        # Show gamepad axis spinbox only when Gamepad mode is selected
+        show_gamepad = mode == AKM_GAMEPAD
+        for widget in self._gamepad_row_widgets:
+            if widget is not None:
+                widget.setVisible(show_gamepad)
 
     def on_actuation_changed(self):
         """Handle actuation settings change."""
