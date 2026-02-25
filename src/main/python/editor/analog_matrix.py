@@ -53,6 +53,10 @@ from protocol.keychron import (
     CALIB_FULL_TRAVEL_MANUAL,
     CALIB_SAVE_AND_EXIT,
     CALIB_CLEAR,
+    OKMC_ACTION_NAMES,
+    OKMC_ACTION_NONE,
+    GC_AXIS_NAMES,
+    GC_AXIS_MAX,
 )
 from util import tr
 from vial_device import VialKeyboard
@@ -123,9 +127,9 @@ class AnalogMatrixEditor(BasicEditor):
         name_layout = QHBoxLayout()
         name_layout.addWidget(QLabel(tr("AnalogMatrix", "Name:")))
         self.profile_name_edit = QLineEdit()
-        self.profile_name_edit.setMaxLength(28)
+        self.profile_name_edit.setMaxLength(30)
         self.profile_name_edit.setPlaceholderText(
-            tr("AnalogMatrix", "Enter profile name (max 28 chars)")
+            tr("AnalogMatrix", "Enter profile name (max 30 chars)")
         )
         name_layout.addWidget(self.profile_name_edit)
         self.btn_set_name = QPushButton(tr("AnalogMatrix", "Set Name"))
@@ -204,6 +208,79 @@ class AnalogMatrixEditor(BasicEditor):
 
         global_layout.addLayout(selection_layout)
 
+        # Global Defaults group — sets the profile's global slot (inherited by AKM_GLOBAL keys)
+        global_defaults_group = QGroupBox(
+            tr(
+                "AnalogMatrix",
+                "Global Defaults (inherited by keys set to 'Global' mode)",
+            )
+        )
+        global_defaults_layout = QGridLayout()
+
+        global_defaults_layout.addWidget(QLabel(tr("AnalogMatrix", "Mode:")), 0, 0)
+        self.global_mode = QComboBox()
+        # Global slot only supports Regular and Rapid Trigger
+        self.global_mode.addItem(AKM_MODE_NAMES[AKM_REGULAR], AKM_REGULAR)
+        self.global_mode.addItem(AKM_MODE_NAMES[AKM_RAPID], AKM_RAPID)
+        self.global_mode.setToolTip(
+            tr(
+                "AnalogMatrix",
+                "Default mode for keys set to 'Global':\n"
+                "  Regular — fixed actuation point\n"
+                "  Rapid Trigger — dynamic actuation",
+            )
+        )
+        global_defaults_layout.addWidget(self.global_mode, 0, 1)
+
+        global_defaults_layout.addWidget(
+            QLabel(tr("AnalogMatrix", "Actuation Point:")), 0, 2
+        )
+        self.global_actuation_point = QDoubleSpinBox()
+        self.global_actuation_point.setRange(0.1, 3.9)
+        self.global_actuation_point.setSingleStep(0.1)
+        self.global_actuation_point.setDecimals(1)
+        self.global_actuation_point.setValue(2.0)
+        self.global_actuation_point.setSuffix(" mm")
+        global_defaults_layout.addWidget(self.global_actuation_point, 0, 3)
+
+        global_defaults_layout.addWidget(
+            QLabel(tr("AnalogMatrix", "RT Sensitivity:")), 1, 0
+        )
+        self.global_rt_sensitivity = QDoubleSpinBox()
+        self.global_rt_sensitivity.setRange(0.1, 3.9)
+        self.global_rt_sensitivity.setSingleStep(0.1)
+        self.global_rt_sensitivity.setDecimals(1)
+        self.global_rt_sensitivity.setValue(0.3)
+        self.global_rt_sensitivity.setSuffix(" mm")
+        global_defaults_layout.addWidget(self.global_rt_sensitivity, 1, 1)
+
+        global_defaults_layout.addWidget(
+            QLabel(tr("AnalogMatrix", "RT Release:")), 1, 2
+        )
+        self.global_rt_release = QDoubleSpinBox()
+        self.global_rt_release.setRange(0.1, 3.9)
+        self.global_rt_release.setSingleStep(0.1)
+        self.global_rt_release.setDecimals(1)
+        self.global_rt_release.setValue(0.3)
+        self.global_rt_release.setSuffix(" mm")
+        global_defaults_layout.addWidget(self.global_rt_release, 1, 3)
+
+        self.btn_set_global_defaults = QPushButton(
+            tr("AnalogMatrix", "Set Global Defaults")
+        )
+        self.btn_set_global_defaults.setToolTip(
+            tr(
+                "AnalogMatrix",
+                "Write these values to the profile's global config slot.\n"
+                "All keys set to 'Global' mode will use these settings.",
+            )
+        )
+        self.btn_set_global_defaults.clicked.connect(self._apply_global_defaults)
+        global_defaults_layout.addWidget(self.btn_set_global_defaults, 2, 0, 1, 4)
+
+        global_defaults_group.setLayout(global_defaults_layout)
+        global_layout.addWidget(global_defaults_group)
+
         # Settings group
         settings_group = QGroupBox(tr("AnalogMatrix", "Actuation Settings"))
         settings_layout = QGridLayout()
@@ -278,12 +355,13 @@ class AnalogMatrixEditor(BasicEditor):
         self.rt_release_sensitivity.valueChanged.connect(self.on_actuation_changed)
         settings_layout.addWidget(self.rt_release_sensitivity, 1, 3)
 
-        # Gamepad axis (shown only when mode=Gamepad)
+        # Gamepad axis/direction (shown only when mode=Gamepad)
         settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Joystick Axis:")), 2, 0)
-        self.gamepad_axis = QSpinBox()
-        self.gamepad_axis.setRange(0, 15)
+        self.gamepad_axis = QComboBox()
+        for val, name in GC_AXIS_NAMES.items():
+            self.gamepad_axis.addItem(name, val)
         self.gamepad_axis.setToolTip(
-            tr("AnalogMatrix", "Joystick axis index to assign to this key (0-15)")
+            tr("AnalogMatrix", "Joystick axis or button to assign to this key")
         )
         settings_layout.addWidget(self.gamepad_axis, 2, 1)
 
@@ -551,38 +629,50 @@ class AnalogMatrixEditor(BasicEditor):
         kc_group.setLayout(kc_layout)
         dks_layout.addWidget(kc_group)
 
-        # Actions group — 4 actions, each with 4 nibble (0-15) combos
-        # Action meaning: which keycode fires on each of the 4 events
-        ACTION_EVENT_NAMES = ["Shallow Act", "Shallow Deact", "Deep Act", "Deep Deact"]
-        ACT_CHOICES = {i: str(i) if i > 0 else "None (0)" for i in range(16)}
+        # Actions group — rows = events, columns = keycode slots
+        # Each cell: what action fires for that keycode slot on that event
+        # Values: None / Release / Press / Tap / Re-press  (firmware bitfield)
+        DKS_EVENT_NAMES = [
+            tr("AnalogMatrix", "Shallow Act"),
+            tr("AnalogMatrix", "Shallow Deact"),
+            tr("AnalogMatrix", "Deep Act"),
+            tr("AnalogMatrix", "Deep Deact"),
+        ]
 
         actions_group = QGroupBox(
-            tr("AnalogMatrix", "Actions (keycode index 0-3 per event, 0=none)")
+            tr("AnalogMatrix", "Actions — what each keycode does on each event")
         )
         actions_layout = QGridLayout()
 
-        # Header row
-        for j, ev in enumerate(ACTION_EVENT_NAMES):
-            actions_layout.addWidget(QLabel(tr("AnalogMatrix", ev)), 0, j + 1)
+        # Header row: KC0 … KC3
+        for j in range(4):
+            lbl = QLabel(tr("AnalogMatrix", "KC{}").format(j))
+            lbl.setToolTip(tr("AnalogMatrix", "Keycode slot {}").format(j))
+            actions_layout.addWidget(lbl, 0, j + 1)
 
-        self.dks_actions = []  # list of 4 dicts of 4 QSpinBox
-        for i in range(4):
-            actions_layout.addWidget(
-                QLabel(tr("AnalogMatrix", "KC{}:").format(i)), i + 1, 0
-            )
-            row_spins = []
+        # self.dks_actions[event_idx][kc_slot] = QComboBox
+        self.dks_actions = []
+        for i, ev_name in enumerate(DKS_EVENT_NAMES):
+            actions_layout.addWidget(QLabel(ev_name), i + 1, 0)
+            event_combos = []
             for j in range(4):
-                spin = QSpinBox()
-                spin.setRange(0, 15)
-                spin.setToolTip(
+                combo = QComboBox()
+                for val, name in OKMC_ACTION_NAMES.items():
+                    combo.addItem(name, val)
+                combo.setToolTip(
                     tr(
                         "AnalogMatrix",
-                        "Keycode index (0-3) triggered on this event, or 0 for none",
-                    )
+                        "Action for keycode slot {} on event '{}':\n"
+                        "  None — do nothing\n"
+                        "  Press — send key down\n"
+                        "  Release — send key up\n"
+                        "  Tap — press then release\n"
+                        "  Re-press — release, press, release",
+                    ).format(j, ev_name)
                 )
-                actions_layout.addWidget(spin, i + 1, j + 1)
-                row_spins.append(spin)
-            self.dks_actions.append(row_spins)
+                actions_layout.addWidget(combo, i + 1, j + 1)
+                event_combos.append(combo)
+            self.dks_actions.append(event_combos)
 
         actions_group.setLayout(actions_layout)
         dks_layout.addWidget(actions_group)
@@ -690,6 +780,11 @@ class AnalogMatrixEditor(BasicEditor):
                 self.rt_release_sensitivity.setValue(
                     settings.get("release_sensitivity", 3) / 10.0
                 )
+                # Restore gamepad axis if stored
+                js_axis = settings.get("js_axis", 0)
+                axis_idx = self.gamepad_axis.findData(js_axis)
+                if axis_idx >= 0:
+                    self.gamepad_axis.setCurrentIndex(axis_idx)
                 self._updating = False
 
     def _on_perkey_key_deselected(self):
@@ -728,7 +823,7 @@ class AnalogMatrixEditor(BasicEditor):
 
         # Special advance modes: route to set_keychron_analog_advance_mode_*
         if mode == AKM_GAMEPAD:
-            js_axis = self.gamepad_axis.value()
+            js_axis = self.gamepad_axis.currentData()
             errors = []
             for row, col in selected:
                 ok = self.keyboard.set_keychron_analog_advance_mode_gamepad(
@@ -992,6 +1087,77 @@ class AnalogMatrixEditor(BasicEditor):
                 tr("AnalogMatrix", "Failed to apply SOCD configuration."),
             )
 
+    def _reload_global_defaults(self):
+        """Read the global config slot from firmware and populate the Global Defaults widgets."""
+        if not self.keyboard:
+            return
+        profile = self.profile_selector.currentData()
+        if profile is None:
+            return
+
+        # Global config is always at offset 0, 4 bytes, in the profile raw data
+        raw = self.keyboard.get_keychron_analog_profile_raw(profile, 0, 4)
+        if not raw or len(raw) < 4:
+            return
+
+        cfg = self.keyboard._parse_analog_key_config(raw)
+
+        # Mode: global slot only stores Regular (1) or Rapid (2); clamp to those
+        mode = cfg.get("mode", AKM_REGULAR)
+        if mode not in (AKM_REGULAR, AKM_RAPID):
+            mode = AKM_REGULAR
+        idx = self.global_mode.findData(mode)
+        if idx >= 0:
+            self.global_mode.setCurrentIndex(idx)
+
+        # Actuation point (stored as 0.1 mm units; 0 means "use default", treat as 2.0 mm)
+        act_pt_raw = cfg.get("actuation_point", 20)
+        if act_pt_raw == 0:
+            act_pt_raw = 20  # fallback to 2.0 mm
+        self.global_actuation_point.setValue(act_pt_raw / 10.0)
+
+        # RT sensitivity (stored as 0.1 mm units; 0 → fallback 3)
+        sens_raw = cfg.get("sensitivity", 3)
+        if sens_raw == 0:
+            sens_raw = 3  # fallback to 0.3 mm
+        self.global_rt_sensitivity.setValue(sens_raw / 10.0)
+
+        # RT release sensitivity (stored as 0.1 mm units; 0 → fallback 3)
+        rls_raw = cfg.get("release_sensitivity", 3)
+        if rls_raw == 0:
+            rls_raw = 3  # fallback to 0.3 mm
+        self.global_rt_release.setValue(rls_raw / 10.0)
+
+    def _apply_global_defaults(self):
+        """Write the Global Defaults group values to the profile's global config slot."""
+        if not self.keyboard:
+            return
+        profile = self.profile_selector.currentData()
+        if profile is None:
+            return
+        mode = self.global_mode.currentData()
+        act_pt = int(round(self.global_actuation_point.value() * 10))
+        sens = int(round(self.global_rt_sensitivity.value() * 10))
+        rls_sens = int(round(self.global_rt_release.value() * 10))
+        # entire=True writes the global slot (not per-key); firmware rejects AKM_GLOBAL here
+        success = self.keyboard.set_keychron_analog_travel(
+            profile, mode, act_pt, sens, rls_sens, entire=True
+        )
+        if success:
+            QMessageBox.information(
+                self.tabs,
+                tr("AnalogMatrix", "Applied"),
+                tr("AnalogMatrix", "Global defaults updated for Profile {}.").format(
+                    profile + 1
+                ),
+            )
+        else:
+            QMessageBox.warning(
+                self.tabs,
+                tr("AnalogMatrix", "Error"),
+                tr("AnalogMatrix", "Failed to set global defaults."),
+            )
+
     def valid(self):
         """Check if this tab should be shown."""
         if not isinstance(self.device, VialKeyboard):
@@ -1048,12 +1214,14 @@ class AnalogMatrixEditor(BasicEditor):
         for i, kc_edit in enumerate(self.dks_keycodes):
             kc = cfg["keycodes"][i] if i < len(cfg["keycodes"]) else 0
             kc_edit.setText(f"0x{kc:04X}")
-        for i, row_spins in enumerate(self.dks_actions):
-            act = cfg["actions"][i] if i < len(cfg["actions"]) else {}
-            row_spins[0].setValue(act.get("shallow_act", 0))
-            row_spins[1].setValue(act.get("shallow_deact", 0))
-            row_spins[2].setValue(act.get("deep_act", 0))
-            row_spins[3].setValue(act.get("deep_deact", 0))
+        # dks_actions[event_idx][kc_slot]: event order = shallow_act, shallow_deact, deep_act, deep_deact
+        event_keys = ["shallow_act", "shallow_deact", "deep_act", "deep_deact"]
+        for ev_idx, ev_key in enumerate(event_keys):
+            for kc_slot, combo in enumerate(self.dks_actions[ev_idx]):
+                act = cfg["actions"][kc_slot] if kc_slot < len(cfg["actions"]) else {}
+                val = act.get(ev_key, OKMC_ACTION_NONE)
+                idx = combo.findData(val)
+                combo.setCurrentIndex(idx if idx >= 0 else 0)
         self._updating = False
 
     def _apply_dks_to_selected(self):
@@ -1081,17 +1249,15 @@ class AnalogMatrixEditor(BasicEditor):
             except ValueError:
                 keycodes.append(0)
 
-        # Parse actions
+        # Parse actions: firmware expects actions[kc_slot] with event keys
+        # dks_actions[event_idx][kc_slot] → build actions[kc_slot][event_key]
+        event_keys = ["shallow_act", "shallow_deact", "deep_act", "deep_deact"]
         actions = []
-        for row_spins in self.dks_actions:
-            actions.append(
-                {
-                    "shallow_act": row_spins[0].value(),
-                    "shallow_deact": row_spins[1].value(),
-                    "deep_act": row_spins[2].value(),
-                    "deep_deact": row_spins[3].value(),
-                }
-            )
+        for kc_slot in range(4):
+            act = {}
+            for ev_idx, ev_key in enumerate(event_keys):
+                act[ev_key] = self.dks_actions[ev_idx][kc_slot].currentData()
+            actions.append(act)
 
         # Get selected keys from Actuation tab widget
         selected = self.actuation_keyboard.get_selected_keys()
@@ -1208,6 +1374,9 @@ class AnalogMatrixEditor(BasicEditor):
         # Setup per-key actuation keyboard
         self._setup_actuation_keyboard()
 
+        # Populate Global Defaults group from firmware global config slot
+        self._reload_global_defaults()
+
         # Populate SOCD tab with firmware data
         self._rebuild_socd_tab()
         self._populate_socd_from_firmware()
@@ -1243,6 +1412,8 @@ class AnalogMatrixEditor(BasicEditor):
             self.profile_name_edit.setText(name)
         except Exception:
             self.profile_name_edit.setText("")
+        # Reload global defaults for this profile
+        self._reload_global_defaults()
         # Reload SOCD from firmware for this profile
         self._populate_socd_from_firmware()
         # Reload DKS slot 0 if available

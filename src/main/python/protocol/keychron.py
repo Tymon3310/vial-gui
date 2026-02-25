@@ -230,6 +230,58 @@ CALIB_FULL_TRAVEL_MANUAL = 3
 CALIB_SAVE_AND_EXIT = 4
 CALIB_CLEAR = 5
 
+# OKMC (DKS) action bitfield values — stored as 4-bit nibbles per event slot
+# Semantics from action_okmc.c: bits 0-2 drive sequential key events
+OKMC_ACTION_NONE = 0b000  # 0 — no action
+OKMC_ACTION_RELEASE = 0b001  # 1 — key release
+OKMC_ACTION_PRESS = 0b010  # 2 — key press
+OKMC_ACTION_TAP = 0b110  # 6 — press then release
+OKMC_ACTION_RE_PRESS = 0b111  # 7 — release, press, release
+
+OKMC_ACTION_NAMES = {
+    OKMC_ACTION_NONE: "None",
+    OKMC_ACTION_RELEASE: "Release",
+    OKMC_ACTION_PRESS: "Press",
+    OKMC_ACTION_TAP: "Tap",
+    OKMC_ACTION_RE_PRESS: "Re-press",
+}
+
+# Gamepad axis/direction and button assignments (game_controller_common.h)
+GC_X_AXIS_LEFT = 0
+GC_X_AXIS_RIGHT = 1
+GC_Y_AXIS_DOWN = 2
+GC_Y_AXIS_UP = 3
+GC_Z_AXIS_N = 4
+GC_Z_AXIS_P = 5
+GC_RX_AXIS_LEFT = 6
+GC_RX_AXIS_RIGHT = 7
+GC_RY_AXIS_DOWN = 8
+GC_RY_AXIS_UP = 9
+GC_RZ_AXIS_N = 10
+GC_RZ_AXIS_P = 11
+GC_AXIS_MAX = 12  # first button index
+
+GC_AXIS_NAMES = {
+    GC_X_AXIS_LEFT: "X- (Left)",
+    GC_X_AXIS_RIGHT: "X+ (Right)",
+    GC_Y_AXIS_DOWN: "Y- (Down)",
+    GC_Y_AXIS_UP: "Y+ (Up)",
+    GC_Z_AXIS_N: "Z-",
+    GC_Z_AXIS_P: "Z+",
+    GC_RX_AXIS_LEFT: "RX- (Left)",
+    GC_RX_AXIS_RIGHT: "RX+ (Right)",
+    GC_RY_AXIS_DOWN: "RY- (Down)",
+    GC_RY_AXIS_UP: "RY+ (Up)",
+    GC_RZ_AXIS_N: "RZ-",
+    GC_RZ_AXIS_P: "RZ+",
+}
+# Add buttons 0-31 (indices 13-44)
+for _i in range(32):
+    GC_AXIS_NAMES[GC_AXIS_MAX + 1 + _i] = f"Button {_i}"
+
+GC_MASK_XINPUT = 0x01
+GC_MASK_TYPING = 0x02
+
 # Response status codes
 KC_SUCCESS = 0
 KC_FAIL = 1
@@ -1498,6 +1550,9 @@ class ProtocolKeychron(BaseProtocol):
             - actuation_point: 0-40 (0.1mm units, 0=use global)
             - sensitivity: 0-40 (0.1mm units, 0=use global)
             - release_sensitivity: 0-40 (0.1mm units, 0=use global)
+            - adv_mode: 0-5 (advance mode type)
+            - adv_mode_data: raw byte (okmc_idx for DKS, js_axis for Gamepad)
+            - js_axis: alias of adv_mode_data for Gamepad keys
         """
         rows = getattr(self, "rows", 0)
         cols = getattr(self, "cols", 0)
@@ -1552,7 +1607,8 @@ class ProtocolKeychron(BaseProtocol):
                     key_data = all_data[idx : idx + 4]
                     config = self._parse_analog_key_config(key_data)
 
-                    # If values are 0, inherit from global
+                    # If values are 0, inherit actuation params from global
+                    # (adv_mode/adv_mode_data are per-key, never inherited)
                     if config["mode"] == 0:
                         config["mode"] = global_config["mode"]
                     if config["actuation_point"] == 0:
@@ -1573,6 +1629,9 @@ class ProtocolKeychron(BaseProtocol):
                         "actuation_point": global_config["actuation_point"],
                         "sensitivity": global_config["sensitivity"],
                         "release_sensitivity": global_config["release_sensitivity"],
+                        "adv_mode": 0,
+                        "adv_mode_data": 0,
+                        "js_axis": 0,
                     }
 
         return key_configs
@@ -1585,10 +1644,11 @@ class ProtocolKeychron(BaseProtocol):
         - Byte 0: mode:2 (bits 0-1), act_pt:6 (bits 2-7)
         - Byte 1: rpd_trig_sen:6 (bits 0-5), rpd_trig_sen_deact[0:2] (bits 6-7)
         - Byte 2: rpd_trig_sen_deact[2:6] (bits 0-3), adv_mode:4 (bits 4-7)
-        - Byte 3: adv_mode_data
+        - Byte 3: adv_mode_data (js_axis for Gamepad, okmc_idx for DKS)
 
         Returns:
-            Dict with mode, actuation_point, sensitivity, release_sensitivity
+            Dict with mode, actuation_point, sensitivity, release_sensitivity,
+            adv_mode, adv_mode_data (js_axis for Gamepad keys)
         """
         if len(data) < 4:
             return {
@@ -1596,23 +1656,32 @@ class ProtocolKeychron(BaseProtocol):
                 "actuation_point": 20,
                 "sensitivity": 3,
                 "release_sensitivity": 3,
+                "adv_mode": 0,
+                "adv_mode_data": 0,
+                "js_axis": 0,
             }
 
         byte0 = data[0]
         byte1 = data[1]
         byte2 = data[2]
+        byte3 = data[3]
 
         mode = byte0 & 0x03
         act_pt = (byte0 >> 2) & 0x3F
         rpd_trig_sen = byte1 & 0x3F
         # Release sensitivity spans bytes 1-2
         rpd_trig_sen_deact = ((byte1 >> 6) & 0x03) | ((byte2 & 0x0F) << 2)
+        adv_mode = (byte2 >> 4) & 0x0F
+        adv_mode_data = byte3
 
         return {
             "mode": mode if mode > 0 else 1,  # Treat 0 (global) as regular
             "actuation_point": act_pt if act_pt > 0 else 20,
             "sensitivity": rpd_trig_sen if rpd_trig_sen > 0 else 3,
             "release_sensitivity": rpd_trig_sen_deact if rpd_trig_sen_deact > 0 else 3,
+            "adv_mode": adv_mode,
+            "adv_mode_data": adv_mode_data,
+            "js_axis": adv_mode_data,  # convenience alias for Gamepad mode
         }
 
     def get_keychron_analog_socd_pairs(self, profile):
@@ -1701,14 +1770,15 @@ class ProtocolKeychron(BaseProtocol):
 
     def get_keychron_analog_profile_name(self, profile):
         """
-        Read the profile name string from a profile's raw data.
+        Read the profile name string from the keyboard.
 
-        Profile name is stored at:
-          offset = 4 + rows*cols*4 + okmc_count*19 + socd_count*3
-          length = PROFILE_NAME_LEN (30 bytes, last 2 are CRC so actual name ≤ 28)
+        Profile name is stored at offset:
+          4 + rows*cols*4 + okmc_count*19 + socd_count*3
+          length = PROFILE_NAME_LEN (30 bytes, null-terminated string)
+          CRC is a separate uint16_t field after the name.
 
         Returns:
-            str: Profile name (stripped of null bytes), or "" on failure.
+            str: Profile name (may be empty).
         """
         rows = getattr(self, "rows", 0)
         cols = getattr(self, "cols", 0)
@@ -1716,24 +1786,24 @@ class ProtocolKeychron(BaseProtocol):
         socd_count = getattr(self, "keychron_analog_socd_count", 0)
 
         name_offset = 4 + rows * cols * 4 + okmc_count * 19 + socd_count * 3
-        # Read up to 28 bytes (firmware max name len excl. CRC)
-        name_data = self.get_keychron_analog_profile_raw(profile, name_offset, 28)
+        # Read 30 bytes (full PROFILE_NAME_LEN)
+        name_data = self.get_keychron_analog_profile_raw(profile, name_offset, 30)
         if not name_data:
             return ""
         return name_data.split(b"\x00")[0].decode("utf-8", errors="ignore")
 
     def set_keychron_analog_profile_name(self, profile, name):
         """
-        Set the name for a profile.
+        Set the profile name on the keyboard.
 
         Args:
-            profile: Profile index (0-based)
-            name: str, max 28 characters (firmware limit: PROFILE_NAME_LEN-2)
+            profile: Profile index
+            name: str, max 30 characters (firmware PROFILE_NAME_LEN)
 
         Returns:
             True on success.
         """
-        name_bytes = name.encode("utf-8")[:28]
+        name_bytes = name.encode("utf-8")[:30]
         name_len = len(name_bytes)
         packet = struct.pack(
             "BBBB", KC_ANALOG_MATRIX, AMC_SET_PROFILE_NAME, profile, name_len

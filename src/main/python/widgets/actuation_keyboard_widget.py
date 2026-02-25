@@ -244,6 +244,10 @@ class ActuationKeyboardWidget(KeyboardWidget):
                         mode_char = "R"
                     elif mode == 3:  # DKS
                         mode_char = "D"
+                    elif mode == 4:  # Gamepad
+                        mode_char = "P"
+                    elif mode == 5:  # Toggle
+                        mode_char = "T"
                     # mode == 1 (Regular) has no indicator
 
                     if mode_char:

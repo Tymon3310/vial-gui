@@ -22,10 +22,10 @@ from PyQt5.QtWidgets import (
     QSpinBox,
     QCheckBox,
     QPushButton,
-    QMessageBox,
 )
 
 from editor.basic_editor import BasicEditor
+from factory_reset_dialog import FactoryResetDialog
 from protocol.keychron import (
     DEBOUNCE_TYPE_NAMES,
     REPORT_RATE_NAMES,
@@ -125,6 +125,29 @@ class KeychronSettings(BasicEditor):
         self.wireless_group.setLayout(wireless_layout)
         container_layout.addWidget(self.wireless_group)
 
+        # Factory Reset group
+        self.factory_reset_group = QGroupBox(tr("KeychronSettings", "Factory Reset"))
+        factory_reset_layout = QVBoxLayout()
+
+        factory_reset_info = QLabel(
+            tr(
+                "KeychronSettings",
+                "Factory reset restores all settings to their defaults.\n"
+                "This cannot be triggered via USB — use the hardware key combo instead.",
+            )
+        )
+        factory_reset_info.setWordWrap(True)
+        factory_reset_layout.addWidget(factory_reset_info)
+
+        self.btn_factory_reset = QPushButton(
+            tr("KeychronSettings", "How to Factory Reset...")
+        )
+        self.btn_factory_reset.clicked.connect(self._show_factory_reset_instructions)
+        factory_reset_layout.addWidget(self.btn_factory_reset)
+
+        self.factory_reset_group.setLayout(factory_reset_layout)
+        container_layout.addWidget(self.factory_reset_group)
+
         # Firmware info labels
         self.firmware_label = QLabel()
         container_layout.addWidget(self.firmware_label)
@@ -173,6 +196,7 @@ class KeychronSettings(BasicEditor):
         self.nkro_group.setVisible(self.keyboard.has_keychron_nkro())
         self.report_rate_group.setVisible(self.keyboard.has_keychron_report_rate())
         self.wireless_group.setVisible(self.keyboard.has_keychron_wireless())
+        self.factory_reset_group.setVisible(True)
 
         # Update debounce UI
         if self.keyboard.has_keychron_debounce():
@@ -270,3 +294,8 @@ class KeychronSettings(BasicEditor):
         self.keyboard.set_keychron_wireless_lpm(
             self.wireless_backlit_time.value(), self.wireless_idle_time.value()
         )
+
+    def _show_factory_reset_instructions(self):
+        """Open the factory reset dialog."""
+        dlg = FactoryResetDialog()
+        dlg.exec_()
