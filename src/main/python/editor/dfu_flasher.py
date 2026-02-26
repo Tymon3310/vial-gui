@@ -342,14 +342,11 @@ class DfuFlasher(BasicEditor):
         # _on_click_flash_web is called from a button click so we're on the
         # main thread; Unlocker.unlock() can drive its Qt dialog normally.
         self.log("Unlocking keyboard...")
-        print("[dfu] web: unlocking keyboard on main thread")
         try:
             unlocked = Unlocker.unlock(self.device.keyboard)
         except Exception as e:
-            print("[dfu] web: Unlocker.unlock() raised:", e)
             unlocked = False
         if not unlocked:
-            print("[dfu] web: unlock failed or cancelled")
             self.log(
                 "Error: Keyboard could not be unlocked.\n"
                 "Use Security > Unlock and try again."
@@ -357,23 +354,19 @@ class DfuFlasher(BasicEditor):
             self.unlock_ui(force_refresh=False)
             return
 
-        print("[dfu] web: unlock done, starting flash thread")
-        # Snapshot all Qt widget state and shared mutable state here on the
-        # main thread. Accessing Qt widgets from a background thread deadlocks
-        # under Emscripten's thread-proxying model.
+        # All work runs on the main thread as a QTimer state machine — no
+        # background thread.  Under Emscripten PROXY_TO_PTHREAD a background
+        # pthread cannot easily acquire the GIL or deliver cross-thread Qt
+        # signals, so we keep everything on the Qt main pthread and yield
+        # control back to the browser event loop between steps via QTimer.
         do_restore = self.chk_restore_layout.isChecked()
         firmware_bytes = bytes(self.selected_firmware_bytes)
-        self.log(
-            "[dfu] web: do_restore={} fw_len={}".format(do_restore, len(firmware_bytes))
-        )
-        t = threading.Thread(
-            target=self._flash_thread_web,
-            args=(do_restore, firmware_bytes),
-            daemon=True,
-        )
-        self.log("[dfu] web: thread object created, calling start()")
-        t.start()
-        self.log("[dfu] web: thread.start() returned")
+        self._web_state = {
+            "do_restore": do_restore,
+            "firmware_bytes": firmware_bytes,
+        }
+        self._web_timer = None  # will be set during polling steps
+        self._web_step_backup_layout()
 
     # ── Background flash thread (desktop) ─────────────────────────────────────
 
@@ -432,125 +425,184 @@ class DfuFlasher(BasicEditor):
             "Flash successful! Waiting for keyboard to restart..."
         )
 
-    # ── Background flash thread (web) ─────────────────────────────────────────
+    # ── Web flash state machine (runs on Qt main thread via QTimer) ───────────
+    # Each _web_step_* method does one unit of work then either calls the next
+    # step directly or schedules it with QTimer.singleShot so the browser event
+    # loop can process pending messages (HID input reports, postMessage, etc.)
+    # before we continue.  This avoids blocking the main pthread which would
+    # prevent JS events from being delivered.
 
-    def _flash_thread_web(self, do_restore, firmware_bytes):
-        try:
-            self._do_flash_web(do_restore, firmware_bytes)
-        except Exception as e:
-            self.error_signal.emit(
-                "Unexpected error: {}\n{}".format(e, traceback.format_exc())
-            )
+    def _web_error(self, msg):
+        self.log("Error: " + msg)
+        self.unlock_ui(force_refresh=False)
 
-    def _do_flash_web(self, do_restore, firmware_bytes):
-        import vialglue  # noqa: available on emscripten
-
-        # NOTE: never use print() from this thread — fd_write proxies
-        # synchronously to the main thread via Atomics.wait and deadlocks.
-        # Use log_signal / error_signal exclusively.
-
-        self.log_signal.emit("Flash thread started.")
-
-        # 1. Back up layout while the keyboard is still connected via WebHID.
+    def _web_step_backup_layout(self):
+        do_restore = self._web_state["do_restore"]
         if do_restore and self.device and self.device.keyboard:
-            self.log_signal.emit("Backing up current layout...")
+            self.log("Backing up current layout...")
             try:
                 self.layout_restore = self.device.keyboard.save_layout()
-                self.log_signal.emit(
+                self.log(
                     "Layout backed up ({} bytes).".format(len(self.layout_restore))
                 )
             except Exception as e:
-                self.log_signal.emit("Warning: Failed to back up layout: {}".format(e))
+                self.log("Warning: Failed to back up layout: {}".format(e))
                 self.layout_restore = None
         else:
-            self.log_signal.emit("Skipping layout backup.")
+            self.log("Skipping layout backup.")
+        # Yield to browser event loop before the next step
+        from PyQt5.QtCore import QTimer
 
-        # 2. Reboot keyboard into DFU mode.
-        #    Unlock was already done on the main thread before this thread started.
-        self.log_signal.emit("Rebooting keyboard into DFU mode...")
+        QTimer.singleShot(0, self._web_step_reset_keyboard)
+
+    def _web_step_reset_keyboard(self):
+        # Unlock was already done before the state machine started.
+        self.log("Rebooting keyboard into DFU mode...")
         try:
             self.device.keyboard.reset()
         except Exception as e:
-            # reset() sends 0x0B then the device disconnects; a read timeout
-            # or OSError on close is expected and not a failure.
-            self.log_signal.emit("Note: {}".format(e))
+            # reset() sends the reboot command then the device disconnects;
+            # an OSError or read timeout on close is expected and not a failure.
+            self.log("Note: {}".format(e))
+        from PyQt5.QtCore import QTimer
 
-        # 3. Wait for the keyboard to enumerate as a DFU device, then show the
-        #    WebUSB picker via a native browser button (requires user gesture).
-        self.log_signal.emit(
-            "Keyboard rebooting into DFU mode...\n"
-            "Click the 'Select DFU Device' button that appeared on screen."
+        # Give the keyboard 3 s to enumerate as a DFU device before prompting.
+        self.log(
+            "Waiting for keyboard to reboot into DFU mode...\n"
+            "Click the 'Select DFU Device' button that will appear on screen."
         )
-        time.sleep(3)
+        QTimer.singleShot(3000, self._web_step_show_usb_picker)
+
+    def _web_step_show_usb_picker(self):
+        import vialglue  # noqa: available on emscripten
+
+        # dfu_show_usb_picker resets dfu_status_ready to 0 before showing the
+        # overlay, so the poll loop starts clean.
         vialglue.dfu_show_usb_picker()
+        self.log("Waiting for DFU device selection...")
+        from PyQt5.QtCore import QTimer
 
-        self.log_signal.emit("Waiting for DFU device selection...")
-        while True:
-            status_json = vialglue.dfu_flash_status()
-            try:
-                status = json.loads(status_json)
-            except Exception:
-                self.error_signal.emit("Error: invalid status from DFU bridge")
-                return
-            s = status.get("status", "")
-            if s == "usb_ready":
-                self.log_signal.emit("USB DFU device selected.")
-                break
-            elif s == "error":
-                self.error_signal.emit("Error: {}".format(status.get("msg", "unknown")))
-                return
-            elif s == "log":
-                self.log_signal.emit(status.get("msg", ""))
+        QTimer.singleShot(200, self._web_step_poll_usb_ready)
 
-        self.log_signal.emit(
-            "Starting DFU flash ({} bytes)...".format(len(firmware_bytes))
-        )
-        self.progress_signal.emit(0.05)
+    def _web_step_poll_usb_ready(self):
+        import vialglue  # noqa: available on emscripten
+
+        status_json = vialglue.dfu_flash_status_poll()
+        try:
+            status = json.loads(status_json)
+        except Exception:
+            self._web_error("invalid status from DFU bridge")
+            return
+        s = status.get("status", "")
+        if s == "pending":
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(200, self._web_step_poll_usb_ready)
+        elif s == "usb_ready":
+            self.log("USB DFU device selected.")
+            self._web_step_start_flash()
+        elif s == "log":
+            self.log(status.get("msg", ""))
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(200, self._web_step_poll_usb_ready)
+        elif s == "error":
+            self._web_error(status.get("msg", "unknown"))
+        else:
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(200, self._web_step_poll_usb_ready)
+
+    def _web_step_start_flash(self):
+        import vialglue  # noqa: available on emscripten
+
+        firmware_bytes = self._web_state["firmware_bytes"]
+        self.log("Starting DFU flash ({} bytes)...".format(len(firmware_bytes)))
+        self.progress_bar.setValue(5)
         vialglue.dfu_flash_start(firmware_bytes)
+        from PyQt5.QtCore import QTimer
 
-        while True:
-            status_json = vialglue.dfu_flash_status()
-            try:
-                status = json.loads(status_json)
-            except Exception:
-                self.error_signal.emit("Error: invalid status from DFU bridge")
-                return
-            s = status.get("status", "")
-            if s == "done":
-                self.log_signal.emit("Flash complete.")
-                break
-            elif s == "error":
-                self.error_signal.emit("Error: {}".format(status.get("msg", "unknown")))
-                return
-            elif s == "progress":
-                self.progress_signal.emit(status.get("pct", 0))
-            elif s == "log":
-                self.log_signal.emit(status.get("msg", ""))
+        QTimer.singleShot(200, self._web_step_poll_flash_done)
 
-        # Flash done. Attempt layout restore if requested.
+    def _web_step_poll_flash_done(self):
+        import vialglue  # noqa: available on emscripten
+
+        status_json = vialglue.dfu_flash_status_poll()
+        try:
+            status = json.loads(status_json)
+        except Exception:
+            self._web_error("invalid status from DFU bridge")
+            return
+        s = status.get("status", "")
+        if s == "pending":
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(200, self._web_step_poll_flash_done)
+        elif s == "done":
+            self.log("Flash complete.")
+            self.progress_bar.setValue(100)
+            self._web_step_maybe_reconnect()
+        elif s == "progress":
+            pct = status.get("pct", 0)
+            self.progress_bar.setValue(int(pct * 100))
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(200, self._web_step_poll_flash_done)
+        elif s == "log":
+            self.log(status.get("msg", ""))
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(200, self._web_step_poll_flash_done)
+        elif s == "error":
+            self._web_error(status.get("msg", "unknown"))
+        else:
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(200, self._web_step_poll_flash_done)
+
+    def _web_step_maybe_reconnect(self):
         if self.layout_restore:
-            self.log_signal.emit(
+            self.log(
                 "Flash successful! The keyboard is restarting.\n"
                 "Click the 'Reconnect Keyboard' button that appeared on screen."
             )
+            import vialglue  # noqa: available on emscripten
+
             vialglue.dfu_show_hid_picker()
-            result_json = vialglue.request_reconnect()
-            try:
-                result = json.loads(result_json)
-            except Exception:
-                self.error_signal.emit("Error: invalid reconnect status")
-                return
-            if result.get("status") == "reconnected":
-                self.log_signal.emit("Keyboard reconnected. Restoring layout...")
-                self.complete_signal.emit("web_restore")
-            else:
-                msg = result.get("msg", "unknown error")
-                self.log_signal.emit(
-                    "Warning: Reconnect failed: {}\nLayout restore skipped.".format(msg)
-                )
-                self.complete_signal.emit("Flash successful! (Layout restore skipped)")
+            # dfu_show_hid_picker resets dfu_status_ready to 0
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(200, self._web_step_poll_reconnect)
         else:
-            self.complete_signal.emit("Flash successful!")
+            self._on_complete("Flash successful!")
+
+    def _web_step_poll_reconnect(self):
+        import vialglue  # noqa: available on emscripten
+
+        status_json = vialglue.dfu_flash_status_poll()
+        try:
+            status = json.loads(status_json)
+        except Exception:
+            self._web_error("invalid status from reconnect bridge")
+            return
+        s = status.get("status", "")
+        if s == "pending":
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(200, self._web_step_poll_reconnect)
+        elif s == "reconnected":
+            self.log("Keyboard reconnected. Restoring layout...")
+            self._on_complete("web_restore")
+        elif s == "error":
+            msg = status.get("msg", "unknown error")
+            self.log(
+                "Warning: Reconnect failed: {}\nLayout restore skipped.".format(msg)
+            )
+            self._on_complete("Flash successful! (Layout restore skipped)")
+        else:
+            from PyQt5.QtCore import QTimer
+
+            QTimer.singleShot(200, self._web_step_poll_reconnect)
 
     # ── Signals (called on main thread) ───────────────────────────────────────
 
@@ -564,10 +616,9 @@ class DfuFlasher(BasicEditor):
         self.progress_bar.setValue(100)
         if IS_WEB:
             if msg == "web_restore":
-                # Reconnect already succeeded in the background thread;
-                # the C glue (g_device) is now pointing at the new device.
-                # Reload the keyboard to get the new firmware's capabilities,
-                # then restore the saved layout.
+                # Reconnect succeeded; the C glue (g_device) now points at the
+                # new device.  Reload the keyboard to pick up the new firmware's
+                # capabilities, then restore the saved layout.
                 self.log("Restoring layout to newly flashed firmware...")
                 try:
                     self.device.keyboard.reload()
