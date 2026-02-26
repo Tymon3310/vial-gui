@@ -31,6 +31,7 @@ from editor.combos import Combos
 from constants import WINDOW_WIDTH, WINDOW_HEIGHT
 from widgets.editor_container import EditorContainer
 from editor.firmware_flasher import FirmwareFlasher
+from editor.dfu_flasher import DfuFlasher
 from editor.key_override import KeyOverride
 from protocol.keyboard_comm import ProtocolError
 from editor.keymap_editor import KeymapEditor
@@ -93,6 +94,7 @@ class MainWindow(QMainWindow):
         self.layout_editor = LayoutEditor()
         self.keymap_editor = KeymapEditor(self.layout_editor)
         self.firmware_flasher = FirmwareFlasher(self)
+        self.dfu_flasher = DfuFlasher(self)
         self.macro_recorder = MacroRecorder()
         self.tap_dance = TapDance()
         self.combos = Combos()
@@ -127,6 +129,7 @@ class MainWindow(QMainWindow):
             (self.qmk_settings, "QMK Settings"),
             (self.matrix_tester, "Matrix tester"),
             (self.firmware_flasher, "Firmware updater"),
+            (self.dfu_flasher, "DFU Firmware updater"),
         ]
 
         Unlocker.global_layout_editor = self.layout_editor
@@ -420,6 +423,7 @@ class MainWindow(QMainWindow):
             self.snap_click,
             self.keychron_rgb,
             self.analog_matrix,
+            self.dfu_flasher,
         ]:
             e.rebuild(self.autorefresh.current_device)
 

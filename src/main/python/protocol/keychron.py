@@ -526,6 +526,13 @@ class ProtocolKeychron(BaseProtocol):
             return True
         return bool(getattr(self, "keychron_features", 0) & FEATURE_ANALOG_MATRIX)
 
+    def has_keychron_dfu(self):
+        """Check if STM32 DFU flashing is supported (stm32-dfu bootloader keyboards)."""
+        # Detected via MISC_DFU_INFO flag or MCU info string containing "STM32"
+        has_dfu_info = bool(getattr(self, "keychron_misc_features", 0) & MISC_DFU_INFO)
+        has_stm32_mcu = "STM32" in getattr(self, "keychron_mcu_info", "")
+        return has_dfu_info or has_stm32_mcu
+
     def has_keychron_default_layer(self):
         """Check if KC_GET_DEFAULT_LAYER is supported."""
         return bool(getattr(self, "keychron_features", 0) & FEATURE_DEFAULT_LAYER)
