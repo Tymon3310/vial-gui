@@ -14,14 +14,15 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
-    QLabel,
     QWidget,
     QSizePolicy,
+    QLabel,
     QGroupBox,
     QComboBox,
     QSpinBox,
     QCheckBox,
     QPushButton,
+    QApplication,
 )
 
 from editor.basic_editor import BasicEditor
@@ -297,5 +298,5 @@ class KeychronSettings(BasicEditor):
 
     def _show_factory_reset_instructions(self):
         """Open the factory reset dialog."""
-        dlg = FactoryResetDialog()
+        dlg = FactoryResetDialog(parent=QApplication.activeWindow())
         dlg.exec_()

@@ -5,14 +5,15 @@ import sys
 from protocol.constants import CMD_VIA_VIAL_PREFIX, CMD_VIAL_GET_KEYBOARD_ID
 
 if sys.platform == "emscripten":
-
     import vialglue
     import json
 
     class hiddevice:
-
         def open_path(self, path):
             print("opening {}...".format(path))
+
+        def close(self):
+            pass
 
         def write(self, data):
             return vialglue.write_device(data)
@@ -21,9 +22,7 @@ if sys.platform == "emscripten":
             data = vialglue.read_device()
             return data
 
-
     class hid:
-
         @staticmethod
         def enumerate():
             from util import hid_send
@@ -33,7 +32,11 @@ if sys.platform == "emscripten":
             # so let's probe it with a vial command, and if the response looks good, inject fake vial serial number
             # in the device descriptor
             dev = hid.device()
-            data = hid_send(dev, struct.pack("BB", CMD_VIA_VIAL_PREFIX, CMD_VIAL_GET_KEYBOARD_ID), retries=20)
+            data = hid_send(
+                dev,
+                struct.pack("BB", CMD_VIA_VIAL_PREFIX, CMD_VIAL_GET_KEYBOARD_ID),
+                retries=20,
+            )
             uid = data[4:12]
             # here, a VIA keyboard will echo back all zeroes, while vial will return a valid UID
             # so if this looks like vial, inject the serial numebr

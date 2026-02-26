@@ -1,3 +1,4 @@
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QDialog,
@@ -74,8 +75,9 @@ class AboutKeyboard(QDialog):
             return "yes"
         return self.want_min_vial_fw(VIAL_PROTOCOL_DYNAMIC)
 
-    def __init__(self, device):
-        super().__init__()
+    def __init__(self, device, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.Tool)
 
         self.keyboard = device.keyboard
         self.setWindowTitle("About {}".format(device.title()))

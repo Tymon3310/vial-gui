@@ -42,7 +42,9 @@ class FactoryResetDialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle(tr("FactoryReset", "Factory Reset"))
-        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
+        self.setWindowFlags(
+            Qt.Dialog | Qt.Tool | Qt.WindowTitleHint | Qt.CustomizeWindowHint
+        )
         self.setModal(True)
 
         # Match the unlocker background style

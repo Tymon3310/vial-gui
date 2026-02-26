@@ -1,14 +1,22 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout, QLineEdit, QLabel
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QVBoxLayout,
+    QLineEdit,
+    QLabel,
+)
 
 from keycodes.keycodes import Keycode
 from util import tr
 
 
 class AnyKeycodeDialog(QDialog):
-
     def __init__(self, initial):
-        super().__init__()
+        super().__init__(QApplication.activeWindow())
+        self.setWindowFlags(Qt.Dialog | Qt.Tool)
 
         self.setWindowTitle(tr("AnyKeycodeDialog", "Enter an arbitrary keycode"))
 
@@ -44,10 +52,14 @@ class AnyKeycodeDialog(QDialog):
             self.lbl_computed.setText(tr("AnyKeycodeDialog", "Enter an expression"))
         elif err:
             self.value = ""
-            self.lbl_computed.setText(tr("AnyKeycodeDialog", "Invalid input: {}").format(err))
+            self.lbl_computed.setText(
+                tr("AnyKeycodeDialog", "Invalid input: {}").format(err)
+            )
         elif isinstance(value, int):
             self.value = Keycode.serialize(value)
-            self.lbl_computed.setText(tr("AnyKeycodeDialog", "Computed value: 0x{:X}").format(value))
+            self.lbl_computed.setText(
+                tr("AnyKeycodeDialog", "Computed value: 0x{:X}").format(value)
+            )
         else:
             self.value = ""
             self.lbl_computed.setText(tr("AnyKeycodeDialog", "Invalid input"))

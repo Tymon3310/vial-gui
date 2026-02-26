@@ -11,12 +11,14 @@ from util import tr
 
 
 class Unlocker(QDialog):
+    def __init__(self, layout_editor, keyboard, parent=None):
+        super().__init__(parent)
 
-    def __init__(self, layout_editor, keyboard):
-        super().__init__()
-
-        self.setStyleSheet("background-color: {}".format(
-            QApplication.palette().color(QPalette.Button).lighter(130).name()))
+        self.setStyleSheet(
+            "background-color: {}".format(
+                QApplication.palette().color(QPalette.Button).lighter(130).name()
+            )
+        )
 
         self.keyboard = keyboard
 
@@ -24,12 +26,33 @@ class Unlocker(QDialog):
 
         self.progress = QProgressBar()
 
-        layout.addWidget(QLabel(tr("Unlocker", "In order to proceed, the keyboard must be set into unlocked mode.\n"
-                                               "You should only perform this operation on computers that you trust.")))
-        layout.addWidget(QLabel(tr("Unlocker", "To exit this mode, you will need to replug the keyboard\n"
-                                               "or select Security->Lock from the menu.")))
-        layout.addWidget(QLabel(tr("Unlocker", "Press and hold the following keys until the progress bar "
-                                               "below fills up:")))
+        layout.addWidget(
+            QLabel(
+                tr(
+                    "Unlocker",
+                    "In order to proceed, the keyboard must be set into unlocked mode.\n"
+                    "You should only perform this operation on computers that you trust.",
+                )
+            )
+        )
+        layout.addWidget(
+            QLabel(
+                tr(
+                    "Unlocker",
+                    "To exit this mode, you will need to replug the keyboard\n"
+                    "or select Security->Lock from the menu.",
+                )
+            )
+        )
+        layout.addWidget(
+            QLabel(
+                tr(
+                    "Unlocker",
+                    "Press and hold the following keys until the progress bar "
+                    "below fills up:",
+                )
+            )
+        )
 
         self.keyboard_reference = KeyboardWidget(layout_editor)
         self.keyboard_reference.set_enabled(False)
@@ -40,7 +63,9 @@ class Unlocker(QDialog):
         layout.addWidget(self.progress)
 
         self.setLayout(layout)
-        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
+        self.setWindowFlags(
+            Qt.Dialog | Qt.Tool | Qt.WindowTitleHint | Qt.CustomizeWindowHint
+        )
 
         self.update_reference()
         self.timer = QTimer()
@@ -48,7 +73,7 @@ class Unlocker(QDialog):
         self.perform_unlock()
 
     def update_reference(self):
-        """ Updates keycap reference image """
+        """Updates keycap reference image"""
 
         self.keyboard_reference.set_keys(self.keyboard.keys, self.keyboard.encoders)
 
@@ -72,11 +97,13 @@ class Unlocker(QDialog):
 
         if sys.platform == "emscripten":
             import vialglue
+
             vialglue.unlock_status(unlock_counter)
 
         if unlocked == 1:
             if sys.platform == "emscripten":
                 import vialglue
+
                 vialglue.unlock_done()
 
             self.accept()
@@ -112,7 +139,7 @@ class Unlocker(QDialog):
             return True
 
         cls.dlg_retval = None
-        dlg = cls(cls.global_layout_editor, keyboard)
+        dlg = cls(cls.global_layout_editor, keyboard, parent=cls.global_main_window)
         dlg.finished.connect(cls.on_dialog_finished)
         cls.global_main_window.lock_ui()
         dlg.setModal(True)
@@ -125,5 +152,5 @@ class Unlocker(QDialog):
         return ret
 
     def keyPressEvent(self, ev):
-        """ Ignore all key presses, e.g. Esc should not close the window """
+        """Ignore all key presses, e.g. Esc should not close the window"""
         pass

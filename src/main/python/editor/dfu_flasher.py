@@ -210,9 +210,10 @@ class DfuFlasher(BasicEditor):
 
         if IS_WEB:
             self._web_note = QLabel(
-                "Put the keyboard into DFU mode first (hold Esc while plugging in),\n"
-                "then select the firmware file and click Flash.\n"
-                "After flashing you will be prompted to reconnect the keyboard for layout restore."
+                "Select the firmware file and click Flash.\n"
+                "The keyboard will be rebooted into DFU mode automatically.\n"
+                "You will then be prompted to select the DFU device, and afterwards\n"
+                "to reconnect the keyboard for layout restore."
             )
             self.addWidget(self._web_note)
 
@@ -226,10 +227,8 @@ class DfuFlasher(BasicEditor):
             return
         if IS_WEB:
             self.log("Keychron DFU flasher ready (web mode)")
-            self.log("Put keyboard in DFU mode, then select .bin and click Flash.")
-            self.log(
-                "Layout restore after flash is supported — you will be prompted to reconnect."
-            )
+            self.log("Select a .bin firmware file and click Flash.")
+            self.log("The keyboard will be rebooted into DFU mode automatically.")
         else:
             kb = self.device.keyboard
             mcu = getattr(kb, "keychron_mcu_info", "")
@@ -346,9 +345,21 @@ class DfuFlasher(BasicEditor):
                 self.log("Warning: Failed to back up layout: {}".format(e))
                 self.layout_restore = None
 
-        self.log("Requesting USB DFU device...")
+        # Unlock then jump to bootloader — same as the desktop flow.
+        # keyboard.reset() sends the 0x0B jump-to-bootloader command and calls
+        # dev.close() (now a no-op on web) so no exception is raised.
+        self.log("Unlocking keyboard and rebooting into DFU mode...")
         self.lock_ui()
         self.progress_bar.setValue(0)
+        try:
+            Unlocker.unlock(self.device.keyboard)
+            self.device.keyboard.reset()
+        except Exception as e:
+            # reset() sends the reboot command; it's normal for the device to
+            # become unresponsive afterwards, but we don't want to abort.
+            self.log("Note: {}".format(e))
+
+        self.log("Keyboard rebooting — select the DFU device when prompted...")
         threading.Thread(target=self._flash_thread_web, daemon=True).start()
 
     # ── Background flash thread (desktop) ─────────────────────────────────────
@@ -413,6 +424,10 @@ class DfuFlasher(BasicEditor):
 
     def _do_flash_web(self):
         import vialglue  # noqa: available on emscripten
+
+        # Give the keyboard a moment to enumerate as a DFU device after the
+        # jump-to-bootloader command was sent on the main thread.
+        time.sleep(3)
 
         vialglue.dfu_request_usb()
 

@@ -1,14 +1,25 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QDialog, QDialogButtonBox, \
-    QPlainTextEdit, QToolButton, QFileDialog, QWidget
+from PyQt5.QtWidgets import (
+    QVBoxLayout,
+    QHBoxLayout,
+    QDialog,
+    QDialogButtonBox,
+    QPlainTextEdit,
+    QToolButton,
+    QFileDialog,
+    QWidget,
+    QApplication,
+)
 
 from util import tr
 
-class TextboxWindow(QDialog):
 
-    def __init__(self, text="", file_extension="txt", file_type="Text file", encoding="utf-8"):
-        super().__init__()
+class TextboxWindow(QDialog):
+    def __init__(
+        self, text="", file_extension="txt", file_type="Text file", encoding="utf-8"
+    ):
+        super().__init__(QApplication.activeWindow())
 
         self.text = text
         self.file_extension = file_extension
@@ -17,7 +28,7 @@ class TextboxWindow(QDialog):
 
         self.control_held = False
 
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowFlags(Qt.Dialog | Qt.Tool)
 
         vbox = QVBoxLayout()
 
@@ -61,7 +72,6 @@ class TextboxWindow(QDialog):
         vbox.addWidget(self.bottom_widget)
 
         self.setLayout(vbox)
-        self.setWindowFlags(self.windowFlags())
 
     def on_apply(self):
         self.accept()

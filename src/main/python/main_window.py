@@ -550,7 +550,7 @@ class MainWindow(QMainWindow):
             QMessageBox.about(self, title, text)
 
     def about_keyboard(self):
-        self.about_dialog = AboutKeyboard(self.autorefresh.current_device)
+        self.about_dialog = AboutKeyboard(self.autorefresh.current_device, parent=self)
         self.about_dialog.setModal(True)
         self.about_dialog.show()
 
