@@ -154,10 +154,6 @@ class DfuFlasher(BasicEditor):
     progress_signal = pyqtSignal(object)
     complete_signal = pyqtSignal(object)
     error_signal = pyqtSignal(object)
-    # Emitted from background thread to ask the main thread to run Unlocker.
-    # Payload is the keyboard object; result is stored in _unlock_result and
-    # _unlock_event is set when done.
-    _unlock_request_signal = pyqtSignal(object)
 
     def __init__(self, main, parent=None):
         super().__init__(parent)
@@ -168,9 +164,6 @@ class DfuFlasher(BasicEditor):
         self.progress_signal.connect(self._on_progress)
         self.complete_signal.connect(self._on_complete)
         self.error_signal.connect(self._on_error)
-        self._unlock_request_signal.connect(self._on_unlock_request)
-        self._unlock_event = threading.Event()
-        self._unlock_result = False
 
         self.selected_firmware_path = ""
         self.selected_firmware_bytes = None  # used on web
@@ -344,6 +337,27 @@ class DfuFlasher(BasicEditor):
         self.uid_restore = None
         self.lock_ui()
         self.progress_bar.setValue(0)
+
+        # Unlock on the main thread right now — exactly like the desktop path.
+        # _on_click_flash_web is called from a button click so we're on the
+        # main thread; Unlocker.unlock() can drive its Qt dialog normally.
+        self.log("Unlocking keyboard...")
+        print("[dfu] web: unlocking keyboard on main thread")
+        try:
+            unlocked = Unlocker.unlock(self.device.keyboard)
+        except Exception as e:
+            print("[dfu] web: Unlocker.unlock() raised:", e)
+            unlocked = False
+        if not unlocked:
+            print("[dfu] web: unlock failed or cancelled")
+            self.log(
+                "Error: Keyboard could not be unlocked.\n"
+                "Use Security > Unlock and try again."
+            )
+            self.unlock_ui(force_refresh=False)
+            return
+
+        print("[dfu] web: unlock done, starting flash thread")
         threading.Thread(target=self._flash_thread_web, daemon=True).start()
 
     # ── Background flash thread (desktop) ─────────────────────────────────────
@@ -438,23 +452,10 @@ class DfuFlasher(BasicEditor):
                 print("[dfu] web: layout backup failed:", e)
                 self.layout_restore = None
 
-        # 2. Unlock keyboard and jump to bootloader.
-        #    Unlocker shows a Qt dialog which must run on the main thread.
-        #    We signal the main thread to run it and wait for the result via
-        #    a threading.Event so the background flash thread doesn't block Qt.
-        self.log_signal.emit("Unlocking keyboard and rebooting into DFU mode...")
-        print("[dfu] web: requesting unlock from main thread")
-        self._unlock_event.clear()
-        self._unlock_request_signal.emit(self.device.keyboard)
-        self._unlock_event.wait()
-        if not self._unlock_result:
-            print("[dfu] web: unlock failed or cancelled")
-            self.error_signal.emit(
-                "Error: Keyboard could not be unlocked.\n"
-                "Use Security > Unlock and try again."
-            )
-            return
-        print("[dfu] web: unlock done, sending reset")
+        # 2. Reboot keyboard into DFU mode.
+        #    Unlock was already done on the main thread before this thread started.
+        self.log_signal.emit("Rebooting keyboard into DFU mode...")
+        print("[dfu] web: sending reset")
         try:
             self.device.keyboard.reset()
         except Exception as e:
@@ -599,17 +600,6 @@ class DfuFlasher(BasicEditor):
     def _on_error(self, msg):
         self.log(msg)
         self.unlock_ui(force_refresh=False)
-
-    def _on_unlock_request(self, keyboard):
-        """Run Unlocker on the main thread; called via signal from flash thread."""
-        print("[dfu] web: main thread running Unlocker.unlock()")
-        try:
-            result = Unlocker.unlock(keyboard)
-        except Exception as e:
-            print("[dfu] web: Unlocker.unlock() raised:", e)
-            result = False
-        self._unlock_result = bool(result)
-        self._unlock_event.set()
 
     # ── Post-flash reconnect + restore (desktop only) ─────────────────────────
 
