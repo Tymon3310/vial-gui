@@ -358,7 +358,16 @@ class DfuFlasher(BasicEditor):
             return
 
         print("[dfu] web: unlock done, starting flash thread")
-        threading.Thread(target=self._flash_thread_web, daemon=True).start()
+        # Snapshot all Qt widget state and shared mutable state here on the
+        # main thread. Accessing Qt widgets from a background thread deadlocks
+        # under Emscripten's thread-proxying model.
+        do_restore = self.chk_restore_layout.isChecked()
+        firmware_bytes = bytes(self.selected_firmware_bytes)
+        threading.Thread(
+            target=self._flash_thread_web,
+            args=(do_restore, firmware_bytes),
+            daemon=True,
+        ).start()
 
     # ── Background flash thread (desktop) ─────────────────────────────────────
 
@@ -419,30 +428,33 @@ class DfuFlasher(BasicEditor):
 
     # ── Background flash thread (web) ─────────────────────────────────────────
 
-    def _flash_thread_web(self):
+    def _flash_thread_web(self, do_restore, firmware_bytes):
         try:
-            self._do_flash_web()
+            self._do_flash_web(do_restore, firmware_bytes)
         except Exception as e:
             self.error_signal.emit(
                 "Unexpected error: {}\n{}".format(e, traceback.format_exc())
             )
 
-    def _do_flash_web(self):
+    def _do_flash_web(self, do_restore, firmware_bytes):
         import vialglue  # noqa: available on emscripten
 
         print("[dfu] web: flash thread started")
 
         # 1. Back up layout while the keyboard is still connected via WebHID.
         #    This runs on the background pthread — HID I/O works fine here.
+        #    do_restore and firmware_bytes were captured on the main thread;
+        #    we must not touch Qt widgets from here (accessing them from a
+        #    non-main thread deadlocks under Emscripten's thread-proxying model).
         print(
-            "[dfu] web: chk_restore_layout =",
-            self.chk_restore_layout.isChecked(),
+            "[dfu] web: do_restore =",
+            do_restore,
             "device =",
             self.device,
             "keyboard =",
             getattr(self.device, "keyboard", None),
         )
-        if self.chk_restore_layout.isChecked() and self.device and self.device.keyboard:
+        if do_restore and self.device and self.device.keyboard:
             self.log_signal.emit("Backing up current layout...")
             print("[dfu] web: calling save_layout()")
             try:
@@ -510,15 +522,11 @@ class DfuFlasher(BasicEditor):
                 self.log_signal.emit(status.get("msg", ""))
 
         self.log_signal.emit(
-            "Starting DFU flash ({} bytes)...".format(len(self.selected_firmware_bytes))
+            "Starting DFU flash ({} bytes)...".format(len(firmware_bytes))
         )
-        print(
-            "[dfu] web: starting DFU flash ({} bytes)".format(
-                len(self.selected_firmware_bytes)
-            )
-        )
+        print("[dfu] web: starting DFU flash ({} bytes)".format(len(firmware_bytes)))
         self.progress_signal.emit(0.05)
-        vialglue.dfu_flash_start(bytes(self.selected_firmware_bytes))
+        vialglue.dfu_flash_start(firmware_bytes)
 
         while True:
             status_json = vialglue.dfu_flash_status()
