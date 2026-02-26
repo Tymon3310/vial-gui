@@ -193,8 +193,24 @@ class KeychronRGBEditor(BasicEditor):
         per_key_layout = QVBoxLayout()
         per_key_widget.setLayout(per_key_layout)
 
+        # Warning label shown when Per-Key RGB is not the active global effect
+        self.per_key_mode_warning = QLabel(
+            tr(
+                "KeychronRGB",
+                "Per-Key RGB is not the active effect. "
+                'Select "Per-Key RGB" in the Global RGB Mode dropdown above to edit key colors.',
+            )
+        )
+        self.per_key_mode_warning.setWordWrap(True)
+        self.per_key_mode_warning.setStyleSheet(
+            "color: #c07000; background: #fff3cd; border: 1px solid #ffc107; "
+            "padding: 6px; border-radius: 4px;"
+        )
+        self.per_key_mode_warning.setVisible(False)
+        per_key_layout.addWidget(self.per_key_mode_warning)
+
         # Effect type selection
-        effect_group = QGroupBox(tr("KeychronRGB", "Per-Key RGB Effect"))
+        self.per_key_effect_group = QGroupBox(tr("KeychronRGB", "Per-Key RGB Effect"))
         effect_layout = QHBoxLayout()
 
         effect_layout.addWidget(QLabel(tr("KeychronRGB", "Effect Type:")))
@@ -205,11 +221,11 @@ class KeychronRGBEditor(BasicEditor):
         effect_layout.addWidget(self.effect_type)
         effect_layout.addStretch()
 
-        effect_group.setLayout(effect_layout)
-        per_key_layout.addWidget(effect_group)
+        self.per_key_effect_group.setLayout(effect_layout)
+        per_key_layout.addWidget(self.per_key_effect_group)
 
         # Keyboard visualization for LED colors
-        keyboard_group = QGroupBox(tr("KeychronRGB", "LED Colors"))
+        self.per_key_keyboard_group = QGroupBox(tr("KeychronRGB", "LED Colors"))
         keyboard_layout = QVBoxLayout()
 
         # Info and controls row
@@ -252,8 +268,8 @@ class KeychronRGBEditor(BasicEditor):
         color_row.addStretch()
         keyboard_layout.addLayout(color_row)
 
-        keyboard_group.setLayout(keyboard_layout)
-        per_key_layout.addWidget(keyboard_group, 1)
+        self.per_key_keyboard_group.setLayout(keyboard_layout)
+        per_key_layout.addWidget(self.per_key_keyboard_group, 1)
 
         self.tabs.addTab(per_key_widget, tr("KeychronRGB", "Per-Key RGB"))
 
@@ -311,8 +327,26 @@ class KeychronRGBEditor(BasicEditor):
         explanation.setStyleSheet("color: #888; font-style: italic; padding: 5px;")
         mixed_layout.addWidget(explanation)
 
+        # Warning label shown when Mixed RGB is not the active global effect
+        self.mixed_mode_warning = QLabel(
+            tr(
+                "KeychronRGB",
+                "Mixed RGB is not the active effect. "
+                'Select "Mixed RGB" in the Global RGB Mode dropdown above to edit zones.',
+            )
+        )
+        self.mixed_mode_warning.setWordWrap(True)
+        self.mixed_mode_warning.setStyleSheet(
+            "color: #c07000; background: #fff3cd; border: 1px solid #ffc107; "
+            "padding: 6px; border-radius: 4px;"
+        )
+        self.mixed_mode_warning.setVisible(False)
+        mixed_layout.addWidget(self.mixed_mode_warning)
+
         # Keyboard visualization for regions
-        regions_group = QGroupBox(tr("KeychronRGB", "1. Assign Keys to Regions"))
+        self.mixed_regions_group = QGroupBox(
+            tr("KeychronRGB", "1. Assign Keys to Regions")
+        )
         regions_layout = QVBoxLayout()
 
         # Region assignment controls row
@@ -368,11 +402,11 @@ class KeychronRGBEditor(BasicEditor):
         self.region_legend.setWordWrap(True)
         regions_layout.addWidget(self.region_legend)
 
-        regions_group.setLayout(regions_layout)
-        mixed_layout.addWidget(regions_group, 1)
+        self.mixed_regions_group.setLayout(regions_layout)
+        mixed_layout.addWidget(self.mixed_regions_group, 1)
 
         # Effects editor for each region - now with better explanation
-        effects_group = QGroupBox(
+        self.mixed_effects_group = QGroupBox(
             tr("KeychronRGB", "2. Configure Effect Playlist for Each Region")
         )
         effects_layout = QVBoxLayout()
@@ -393,11 +427,10 @@ class KeychronRGBEditor(BasicEditor):
         self.region_effects_tabs = QTabWidget()
         effects_layout.addWidget(self.region_effects_tabs)
 
-        effects_group.setLayout(effects_layout)
-        mixed_layout.addWidget(effects_group)
+        self.mixed_effects_group.setLayout(effects_layout)
+        mixed_layout.addWidget(self.mixed_effects_group)
 
         self.tabs.addTab(mixed_widget, tr("KeychronRGB", "Mixed RGB"))
-        
 
         self._updating = False
 
@@ -450,8 +483,25 @@ class KeychronRGBEditor(BasicEditor):
 
         # Update mixed RGB editor
         self._setup_mixed_rgb()
+        self._update_mixed_rgb_enabled()
 
         self._updating = False
+
+    def _update_mixed_rgb_enabled(self):
+        """Show/hide zone/color controls based on which custom effect is active."""
+        if not self.keyboard:
+            return
+        current_mode = getattr(self.keyboard, "rgb_mode", None)
+        is_per_key = current_mode == 48  # VIALRGB_EFFECT_PER_KEY_RGB
+        is_mixed = current_mode == 49  # VIALRGB_EFFECT_MIXED_RGB
+
+        self.per_key_mode_warning.setVisible(not is_per_key)
+        self.per_key_effect_group.setEnabled(is_per_key)
+        self.per_key_keyboard_group.setEnabled(is_per_key)
+
+        self.mixed_mode_warning.setVisible(not is_mixed)
+        self.mixed_regions_group.setEnabled(is_mixed)
+        self.mixed_effects_group.setEnabled(is_mixed)
 
     def _rebuild_rgb_mode_dropdown(self):
         """Rebuild the RGB mode dropdown with available effects."""
@@ -602,6 +652,8 @@ class KeychronRGBEditor(BasicEditor):
                 self._schedule_save()
             else:
                 logging.warning("KeychronRGB: set_vialrgb_mode not available")
+            # Update Mixed RGB tab enable state whenever the effect changes
+            self._update_mixed_rgb_enabled()
 
     def on_rgb_brightness_changed(self, value):
         """Handle RGB brightness slider change."""

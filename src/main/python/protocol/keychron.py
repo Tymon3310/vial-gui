@@ -772,6 +772,47 @@ class ProtocolKeychron(BaseProtocol):
             }
         if self.has_keychron_snap_click() and self.keychron_snap_click_count > 0:
             data["snap_click"] = self.keychron_snap_click_entries[:]
+        if self.has_keychron_rgb():
+            rgb = {}
+            rgb["per_key_rgb_type"] = self.keychron_per_key_rgb_type
+            # Store colors as [H, S, V] lists (JSON doesn't support tuples)
+            rgb["per_key_colors"] = [list(c) for c in self.keychron_per_key_colors]
+            if self.keychron_os_indicator_config is not None:
+                cfg = self.keychron_os_indicator_config
+                rgb["os_indicator"] = {
+                    "disable_mask": cfg.get("disable_mask", 0),
+                    "hue": cfg.get("hue", 0),
+                    "sat": cfg.get("sat", 255),
+                    "val": cfg.get("val", 255),
+                }
+            if self.keychron_mixed_rgb_layers > 0:
+                rgb["mixed_rgb_regions"] = list(self.keychron_mixed_rgb_regions)
+                rgb["mixed_rgb_effects"] = [
+                    list(layer) for layer in self.keychron_mixed_rgb_effects
+                ]
+            data["rgb"] = rgb
+        if self.has_keychron_analog() and self.keychron_analog_profile_count > 0:
+            analog = {}
+            analog["current_profile"] = self.keychron_analog_current_profile
+            analog["curve"] = list(self.keychron_analog_curve)
+            analog["game_controller_mode"] = self.keychron_analog_game_controller_mode
+            profiles = []
+            for p in range(self.keychron_analog_profile_count):
+                prof = {}
+                prof["name"] = self.get_keychron_analog_profile_name(p)
+                # Key configs: store as "row,col" -> settings dict
+                key_configs = self.get_keychron_analog_key_configs(p) or {}
+                prof["key_configs"] = {
+                    "{},{}".format(r, c): cfg for (r, c), cfg in key_configs.items()
+                }
+                # SOCD pairs
+                prof["socd_pairs"] = self.get_keychron_analog_socd_pairs(p)
+                # OKMC (DKS) slot configs
+                okmc = self.get_keychron_analog_okmc_configs(p)
+                prof["okmc_configs"] = okmc if okmc is not None else []
+                profiles.append(prof)
+            analog["profiles"] = profiles
+            data["analog"] = analog
         return data
 
     def restore_keychron_settings(self, data):
@@ -812,6 +853,173 @@ class ProtocolKeychron(BaseProtocol):
                 )
             if self.keychron_snap_click_count > 0:
                 self.save_keychron_snap_click()
+        if "rgb" in data and self.has_keychron_rgb():
+            rgb = data["rgb"]
+            # Per-key RGB type
+            if "per_key_rgb_type" in rgb:
+                self.set_keychron_per_key_rgb_type(rgb["per_key_rgb_type"])
+            # Per-key colors — only restore as many as the keyboard currently has
+            for i, color in enumerate(rgb.get("per_key_colors", [])):
+                if i >= self.keychron_led_count:
+                    break
+                h, s, v = color[0], color[1], color[2]
+                self.set_keychron_per_key_color(i, h, s, v)
+            # OS indicator config
+            if "os_indicator" in rgb and self.keychron_os_indicator_config is not None:
+                ind = rgb["os_indicator"]
+                self.set_keychron_os_indicator_config(
+                    ind.get("disable_mask", 0),
+                    ind.get("hue", 0),
+                    ind.get("sat", 255),
+                    ind.get("val", 255),
+                )
+            # Mixed RGB regions and effects — only if firmware has mixed RGB
+            if (
+                "mixed_rgb_regions" in rgb
+                and self.keychron_mixed_rgb_layers > 0
+                and self.keychron_led_count > 0
+            ):
+                regions = rgb["mixed_rgb_regions"]
+                # Clamp to current LED count
+                regions = regions[: self.keychron_led_count]
+                self.set_mixed_rgb_regions(0, regions)
+            if "mixed_rgb_effects" in rgb and self.keychron_mixed_rgb_layers > 0:
+                for region, effects in enumerate(rgb["mixed_rgb_effects"]):
+                    if region >= self.keychron_mixed_rgb_layers:
+                        break
+                    self.set_mixed_rgb_effect_list(region, 0, effects)
+            # Flush all RGB changes to EEPROM
+            self.save_keychron_rgb()
+        if "analog" in data and self.has_keychron_analog():
+            analog = data["analog"]
+            rows = getattr(self, "rows", 0)
+            cols = getattr(self, "cols", 0)
+            profile_count = self.keychron_analog_profile_count
+            for p, prof in enumerate(analog.get("profiles", [])):
+                if p >= profile_count:
+                    break
+                # Restore profile name
+                name = prof.get("name", "")
+                if name:
+                    self.set_keychron_analog_profile_name(p, name)
+                # Restore per-key travel configs.
+                # Group keys by (mode, act_pt, sens, rls_sens) to minimise USB traffic:
+                # find the most common combo and apply it globally, then patch outliers.
+                key_configs = prof.get("key_configs", {})
+                if key_configs and rows > 0 and cols > 0:
+                    parsed = {}
+                    for key_str, cfg in key_configs.items():
+                        try:
+                            r, c = (int(x) for x in key_str.split(","))
+                        except (ValueError, AttributeError):
+                            continue
+                        if r < rows and c < cols:
+                            parsed[(r, c)] = cfg
+                    if parsed:
+                        # Find most common (mode, act_pt, sens, rls_sens) tuple
+                        from collections import Counter
+
+                        travel_tuples = [
+                            (
+                                cfg.get("mode", 1),
+                                cfg.get("actuation_point", 20),
+                                cfg.get("sensitivity", 3),
+                                cfg.get("release_sensitivity", 3),
+                            )
+                            for cfg in parsed.values()
+                        ]
+                        most_common_travel = Counter(travel_tuples).most_common(1)[0][0]
+                        mode_g, act_pt_g, sens_g, rls_g = most_common_travel
+                        # Apply global setting to all keys
+                        self.set_keychron_analog_travel(
+                            p, mode_g, act_pt_g, sens_g, rls_g, entire=True
+                        )
+                        # Apply per-key overrides for keys that differ from the global
+                        # Group outliers by their travel combo to batch by row_mask
+                        override_groups = {}
+                        for (r, c), cfg in parsed.items():
+                            combo = (
+                                cfg.get("mode", 1),
+                                cfg.get("actuation_point", 20),
+                                cfg.get("sensitivity", 3),
+                                cfg.get("release_sensitivity", 3),
+                            )
+                            if combo != most_common_travel:
+                                override_groups.setdefault(combo, []).append((r, c))
+                        for (
+                            mode_o,
+                            act_pt_o,
+                            sens_o,
+                            rls_o,
+                        ), keys in override_groups.items():
+                            # Build per-row column bitmasks
+                            row_mask = [0] * rows
+                            for r, c in keys:
+                                row_mask[r] |= 1 << c
+                            self.set_keychron_analog_travel(
+                                p,
+                                mode_o,
+                                act_pt_o,
+                                sens_o,
+                                rls_o,
+                                entire=False,
+                                row_mask=row_mask,
+                            )
+                        # Restore advance modes per key
+                        for (r, c), cfg in parsed.items():
+                            adv = cfg.get("adv_mode", 0)
+                            adv_data = cfg.get("adv_mode_data", 0)
+                            if adv == ADV_MODE_TOGGLE:
+                                self.set_keychron_analog_advance_mode_toggle(p, r, c)
+                            elif adv == ADV_MODE_GAME_CONTROLLER:
+                                self.set_keychron_analog_advance_mode_gamepad(
+                                    p, r, c, adv_data
+                                )
+                            elif adv == ADV_MODE_OKMC:
+                                # DKS: the slot config is in okmc_configs[adv_data]
+                                okmc_list = prof.get("okmc_configs", [])
+                                if adv_data < len(okmc_list):
+                                    slot = okmc_list[adv_data]
+                                    self.set_keychron_analog_advance_mode_dks(
+                                        p,
+                                        r,
+                                        c,
+                                        adv_data,
+                                        slot.get("shallow_act", 0),
+                                        slot.get("shallow_deact", 0),
+                                        slot.get("deep_act", 0),
+                                        slot.get("deep_deact", 0),
+                                        slot.get("keycodes", [0, 0, 0, 0]),
+                                        slot.get("actions", [{}, {}, {}, {}]),
+                                    )
+                            # ADV_MODE_CLEAR (0) means no advance mode — no call needed
+                # Restore SOCD pairs
+                for i, pair in enumerate(prof.get("socd_pairs", [])):
+                    if i >= getattr(self, "keychron_analog_socd_count", 0):
+                        break
+                    self.set_keychron_analog_socd(
+                        p,
+                        pair.get("row1", 0),
+                        pair.get("col1", 0),
+                        pair.get("row2", 0),
+                        pair.get("col2", 0),
+                        i,
+                        pair.get("type", 0),
+                    )
+                # Flush profile to EEPROM
+                self.save_keychron_analog_profile(p)
+            # Restore global analog settings
+            if "curve" in analog and len(analog["curve"]) >= 4:
+                self.set_keychron_analog_curve(analog["curve"])
+            if "game_controller_mode" in analog:
+                self.set_keychron_analog_game_controller_mode(
+                    analog["game_controller_mode"]
+                )
+            # Re-select current profile last
+            if "current_profile" in analog:
+                cp = analog["current_profile"]
+                if cp < profile_count:
+                    self.select_keychron_analog_profile(cp)
 
     def _reload_wireless_lpm(self):
         """Load wireless low power mode settings."""

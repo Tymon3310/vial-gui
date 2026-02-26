@@ -88,7 +88,14 @@ class Unlocker(QDialog):
         self.keyboard_reference.updateGeometry()
 
     def unlock_poller(self):
-        data = self.keyboard.unlock_poll()
+        try:
+            data = self.keyboard.unlock_poll()
+        except Exception:
+            # Device disconnected (e.g. rebooted into bootloader) — treat as done.
+            self.timer.stop()
+            self.accept()
+            return
+
         unlocked = data[0]
         unlock_counter = data[2]
 

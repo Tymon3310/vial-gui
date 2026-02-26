@@ -289,6 +289,7 @@ class DfuFlasher(BasicEditor):
             return
 
         self.log("Preparing to flash...")
+        print("[dfu] desktop flash started: firmware =", self.selected_firmware_path)
         self.lock_ui()
         self.progress_bar.setValue(0)
 
@@ -298,6 +299,7 @@ class DfuFlasher(BasicEditor):
         # Back up layout before rebooting
         if self.chk_restore_layout.isChecked():
             self.log("Backing up current layout...")
+            print("[dfu] desktop: backing up layout")
             try:
                 self.layout_restore = self.device.keyboard.save_layout()
                 self.log(
@@ -317,6 +319,7 @@ class DfuFlasher(BasicEditor):
         # Unlock then jump to bootloader
         Unlocker.unlock(self.device.keyboard)
         self.log("Rebooting into DFU mode...")
+        print("[dfu] desktop: unlocking and rebooting into DFU mode")
         try:
             self.device.keyboard.reset()
         except Exception:
@@ -332,34 +335,8 @@ class DfuFlasher(BasicEditor):
 
         self.layout_restore = None
         self.uid_restore = None
-
-        # Back up layout while the keyboard is still connected via WebHID
-        if self.chk_restore_layout.isChecked() and self.device and self.device.keyboard:
-            self.log("Backing up current layout...")
-            try:
-                self.layout_restore = self.device.keyboard.save_layout()
-                self.log(
-                    "Layout backed up ({} bytes).".format(len(self.layout_restore))
-                )
-            except Exception as e:
-                self.log("Warning: Failed to back up layout: {}".format(e))
-                self.layout_restore = None
-
-        # Unlock then jump to bootloader — same as the desktop flow.
-        # keyboard.reset() sends the 0x0B jump-to-bootloader command and calls
-        # dev.close() (now a no-op on web) so no exception is raised.
-        self.log("Unlocking keyboard and rebooting into DFU mode...")
         self.lock_ui()
         self.progress_bar.setValue(0)
-        try:
-            Unlocker.unlock(self.device.keyboard)
-            self.device.keyboard.reset()
-        except Exception as e:
-            # reset() sends the reboot command; it's normal for the device to
-            # become unresponsive afterwards, but we don't want to abort.
-            self.log("Note: {}".format(e))
-
-        self.log("Keyboard rebooting — select the DFU device when prompted...")
         threading.Thread(target=self._flash_thread_web, daemon=True).start()
 
     # ── Background flash thread (desktop) ─────────────────────────────────────
@@ -377,6 +354,9 @@ class DfuFlasher(BasicEditor):
         self.log_signal.emit(
             "Waiting for DFU device (up to {}s)...".format(DFU_WAIT_TIMEOUT)
         )
+        print(
+            "[dfu] desktop: waiting for DFU device (up to {}s)".format(DFU_WAIT_TIMEOUT)
+        )
         deadline = time.monotonic() + DFU_WAIT_TIMEOUT
         found_dfu = False
         while time.monotonic() < deadline:
@@ -386,6 +366,7 @@ class DfuFlasher(BasicEditor):
             time.sleep(1)
 
         if not found_dfu:
+            print("[dfu] desktop: DFU device not found within timeout")
             self.error_signal.emit(
                 "Error: DFU device did not appear within {}s.\n"
                 "Make sure the keyboard is in DFU mode and dfu-util is installed.".format(
@@ -394,6 +375,7 @@ class DfuFlasher(BasicEditor):
             )
             return
 
+        print("[dfu] desktop: DFU device found, starting flash")
         self.log_signal.emit("DFU device found. Starting flash...")
         self.progress_signal.emit(0.05)
 
@@ -404,9 +386,11 @@ class DfuFlasher(BasicEditor):
             progress_cb=lambda p: self.progress_signal.emit(p),
         )
         if not ok:
+            print("[dfu] desktop: flash failed:", msg)
             self.error_signal.emit("Error: " + msg)
             return
 
+        print("[dfu] desktop: flash complete")
         self.log_signal.emit(msg)
         self.complete_signal.emit(
             "Flash successful! Waiting for keyboard to restart..."
@@ -425,15 +409,57 @@ class DfuFlasher(BasicEditor):
     def _do_flash_web(self):
         import vialglue  # noqa: available on emscripten
 
-        # Give the keyboard a moment to enumerate as a DFU device after the
-        # jump-to-bootloader command was sent on the main thread.
+        print("[dfu] web: flash thread started")
+
+        # 1. Back up layout while the keyboard is still connected via WebHID.
+        #    This runs on the background pthread — HID I/O works fine here.
+        if self.chk_restore_layout.isChecked() and self.device and self.device.keyboard:
+            self.log_signal.emit("Backing up current layout...")
+            print("[dfu] web: backing up layout")
+            try:
+                self.layout_restore = self.device.keyboard.save_layout()
+                self.log_signal.emit(
+                    "Layout backed up ({} bytes).".format(len(self.layout_restore))
+                )
+                print(
+                    "[dfu] web: layout backed up ({} bytes)".format(
+                        len(self.layout_restore)
+                    )
+                )
+            except Exception as e:
+                self.log_signal.emit("Warning: Failed to back up layout: {}".format(e))
+                print("[dfu] web: layout backup failed:", e)
+                self.layout_restore = None
+
+        # 2. Unlock keyboard and jump to bootloader.
+        self.log_signal.emit("Unlocking keyboard and rebooting into DFU mode...")
+        print("[dfu] web: unlocking and rebooting into DFU mode")
+        try:
+            Unlocker.unlock(self.device.keyboard)
+            self.device.keyboard.reset()
+        except Exception as e:
+            # reset() sends 0x0B then calls dev.close() (no-op on web).
+            # The keyboard disconnects immediately after the command is sent,
+            # so a read timeout here is normal and not a failure.
+            self.log_signal.emit("Note: {}".format(e))
+            print("[dfu] web: note during reboot:", e)
+
+        # 3. Wait for the keyboard to enumerate as a DFU device, then show the
+        #    WebUSB picker via a native browser button (requires user gesture).
+        self.log_signal.emit(
+            "Keyboard rebooting into DFU mode...\n"
+            "Click the 'Select DFU Device' button that appeared on screen."
+        )
+        print("[dfu] web: sleeping 3s for DFU enumeration")
         time.sleep(3)
+        print("[dfu] web: showing USB DFU picker overlay")
+        vialglue.dfu_show_usb_picker()
 
-        vialglue.dfu_request_usb()
-
-        self.log_signal.emit("Waiting for USB device selection...")
+        self.log_signal.emit("Waiting for DFU device selection...")
+        print("[dfu] web: waiting for usb_ready status")
         while True:
             status_json = vialglue.dfu_flash_status()
+            print("[dfu] web: status:", status_json)
             try:
                 status = json.loads(status_json)
             except Exception:
@@ -442,8 +468,10 @@ class DfuFlasher(BasicEditor):
             s = status.get("status", "")
             if s == "usb_ready":
                 self.log_signal.emit("USB DFU device selected.")
+                print("[dfu] web: USB device selected and ready")
                 break
             elif s == "error":
+                print("[dfu] web: USB selection error:", status.get("msg"))
                 self.error_signal.emit("Error: {}".format(status.get("msg", "unknown")))
                 return
             elif s == "log":
@@ -452,11 +480,17 @@ class DfuFlasher(BasicEditor):
         self.log_signal.emit(
             "Starting DFU flash ({} bytes)...".format(len(self.selected_firmware_bytes))
         )
+        print(
+            "[dfu] web: starting DFU flash ({} bytes)".format(
+                len(self.selected_firmware_bytes)
+            )
+        )
         self.progress_signal.emit(0.05)
         vialglue.dfu_flash_start(bytes(self.selected_firmware_bytes))
 
         while True:
             status_json = vialglue.dfu_flash_status()
+            print("[dfu] web: flash status:", status_json)
             try:
                 status = json.loads(status_json)
             except Exception:
@@ -465,8 +499,10 @@ class DfuFlasher(BasicEditor):
             s = status.get("status", "")
             if s == "done":
                 self.log_signal.emit("Flash complete.")
+                print("[dfu] web: flash complete")
                 break
             elif s == "error":
+                print("[dfu] web: flash error:", status.get("msg"))
                 self.error_signal.emit("Error: {}".format(status.get("msg", "unknown")))
                 return
             elif s == "progress":
@@ -477,10 +513,14 @@ class DfuFlasher(BasicEditor):
         # Flash done. Attempt layout restore if requested.
         if self.layout_restore:
             self.log_signal.emit(
-                "Flash successful! Reconnect the keyboard to restore layout.\n"
-                "Select the keyboard in the WebHID prompt..."
+                "Flash successful! The keyboard is restarting.\n"
+                "Click the 'Reconnect Keyboard' button that appeared on screen."
             )
+            print("[dfu] web: showing HID reconnect overlay")
+            vialglue.dfu_show_hid_picker()
+            print("[dfu] web: waiting for reconnect")
             result_json = vialglue.request_reconnect()
+            print("[dfu] web: reconnect result:", result_json)
             try:
                 result = json.loads(result_json)
             except Exception:
@@ -488,14 +528,17 @@ class DfuFlasher(BasicEditor):
                 return
             if result.get("status") == "reconnected":
                 self.log_signal.emit("Keyboard reconnected. Restoring layout...")
+                print("[dfu] web: keyboard reconnected, restoring layout")
                 self.complete_signal.emit("web_restore")
             else:
                 msg = result.get("msg", "unknown error")
+                print("[dfu] web: reconnect failed:", msg)
                 self.log_signal.emit(
                     "Warning: Reconnect failed: {}\nLayout restore skipped.".format(msg)
                 )
                 self.complete_signal.emit("Flash successful! (Layout restore skipped)")
         else:
+            print("[dfu] web: no layout to restore, done")
             self.complete_signal.emit("Flash successful!")
 
     # ── Signals (called on main thread) ───────────────────────────────────────
@@ -547,11 +590,17 @@ class DfuFlasher(BasicEditor):
         """
         if not self.uid_restore:
             self.log("No UID recorded — skipping reconnect wait.")
+            print("[dfu] desktop: no UID recorded, skipping reconnect wait")
             self.unlock_ui()
             return
 
         self.log(
             "Waiting for keyboard to re-enumerate (up to {}s)...".format(
+                REBOOT_WAIT_TIMEOUT
+            )
+        )
+        print(
+            "[dfu] desktop: waiting for keyboard to re-enumerate (up to {}s)".format(
                 REBOOT_WAIT_TIMEOUT
             )
         )
@@ -563,6 +612,7 @@ class DfuFlasher(BasicEditor):
             found = self._find_keyboard_with_uid(self.uid_restore)
 
         if found is None:
+            print("[dfu] desktop: keyboard did not re-enumerate within timeout")
             self.log(
                 "Keyboard did not re-enumerate within {}s. "
                 "Layout restore skipped — reconnect manually.".format(
@@ -572,6 +622,7 @@ class DfuFlasher(BasicEditor):
             self.unlock_ui()
             return
 
+        print("[dfu] desktop: keyboard found, restoring layout")
         self.log("Keyboard found. Restoring layout...")
 
         if self.layout_restore:
@@ -583,7 +634,9 @@ class DfuFlasher(BasicEditor):
                 found.keyboard.lock()
                 found.close()
                 self.log("Layout restored.")
+                print("[dfu] desktop: layout restored successfully")
             except Exception as e:
+                print("[dfu] desktop: layout restore failed:", e)
                 self.log(
                     "Warning: Layout restore failed: {}\n{}".format(
                         e, traceback.format_exc()
