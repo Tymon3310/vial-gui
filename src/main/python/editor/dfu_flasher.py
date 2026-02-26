@@ -434,9 +434,17 @@ class DfuFlasher(BasicEditor):
 
         # 1. Back up layout while the keyboard is still connected via WebHID.
         #    This runs on the background pthread — HID I/O works fine here.
+        print(
+            "[dfu] web: chk_restore_layout =",
+            self.chk_restore_layout.isChecked(),
+            "device =",
+            self.device,
+            "keyboard =",
+            getattr(self.device, "keyboard", None),
+        )
         if self.chk_restore_layout.isChecked() and self.device and self.device.keyboard:
             self.log_signal.emit("Backing up current layout...")
-            print("[dfu] web: backing up layout")
+            print("[dfu] web: calling save_layout()")
             try:
                 self.layout_restore = self.device.keyboard.save_layout()
                 self.log_signal.emit(
@@ -451,13 +459,17 @@ class DfuFlasher(BasicEditor):
                 self.log_signal.emit("Warning: Failed to back up layout: {}".format(e))
                 print("[dfu] web: layout backup failed:", e)
                 self.layout_restore = None
+        else:
+            print("[dfu] web: skipping layout backup")
 
         # 2. Reboot keyboard into DFU mode.
         #    Unlock was already done on the main thread before this thread started.
+        print("[dfu] web: about to emit Rebooting log_signal")
         self.log_signal.emit("Rebooting keyboard into DFU mode...")
         print("[dfu] web: sending reset")
         try:
             self.device.keyboard.reset()
+            print("[dfu] web: reset() returned normally")
         except Exception as e:
             # reset() sends 0x0B then the device disconnects; a read timeout
             # or OSError on close is expected and not a failure.
