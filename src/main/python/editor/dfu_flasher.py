@@ -363,11 +363,17 @@ class DfuFlasher(BasicEditor):
         # under Emscripten's thread-proxying model.
         do_restore = self.chk_restore_layout.isChecked()
         firmware_bytes = bytes(self.selected_firmware_bytes)
-        threading.Thread(
+        self.log(
+            "[dfu] web: do_restore={} fw_len={}".format(do_restore, len(firmware_bytes))
+        )
+        t = threading.Thread(
             target=self._flash_thread_web,
             args=(do_restore, firmware_bytes),
             daemon=True,
-        ).start()
+        )
+        self.log("[dfu] web: thread object created, calling start()")
+        t.start()
+        self.log("[dfu] web: thread.start() returned")
 
     # ── Background flash thread (desktop) ─────────────────────────────────────
 
@@ -439,6 +445,10 @@ class DfuFlasher(BasicEditor):
     def _do_flash_web(self, do_restore, firmware_bytes):
         import vialglue  # noqa: available on emscripten
 
+        # Use vialglue (postMessage, no fd_write proxy) to confirm thread is alive
+        # before attempting anything that touches the main thread.
+        self.log_signal.emit("[dfu] web: flash thread alive (signal)")
+        vialglue.fatal_error  # just touch the module to confirm import worked
         print("[dfu] web: flash thread started")
 
         # 1. Back up layout while the keyboard is still connected via WebHID.
