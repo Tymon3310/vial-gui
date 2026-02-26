@@ -108,6 +108,8 @@ class Unlocker(QDialog):
             vialglue.unlock_status(unlock_counter)
 
         if unlocked == 1:
+            self.timer.stop()
+
             if sys.platform == "emscripten":
                 import vialglue
 

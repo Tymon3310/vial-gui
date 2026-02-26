@@ -154,6 +154,10 @@ class DfuFlasher(BasicEditor):
     progress_signal = pyqtSignal(object)
     complete_signal = pyqtSignal(object)
     error_signal = pyqtSignal(object)
+    # Emitted from background thread to ask the main thread to run Unlocker.
+    # Payload is the keyboard object; result is stored in _unlock_result and
+    # _unlock_event is set when done.
+    _unlock_request_signal = pyqtSignal(object)
 
     def __init__(self, main, parent=None):
         super().__init__(parent)
@@ -164,6 +168,9 @@ class DfuFlasher(BasicEditor):
         self.progress_signal.connect(self._on_progress)
         self.complete_signal.connect(self._on_complete)
         self.error_signal.connect(self._on_error)
+        self._unlock_request_signal.connect(self._on_unlock_request)
+        self._unlock_event = threading.Event()
+        self._unlock_result = False
 
         self.selected_firmware_path = ""
         self.selected_firmware_bytes = None  # used on web
@@ -432,15 +439,27 @@ class DfuFlasher(BasicEditor):
                 self.layout_restore = None
 
         # 2. Unlock keyboard and jump to bootloader.
+        #    Unlocker shows a Qt dialog which must run on the main thread.
+        #    We signal the main thread to run it and wait for the result via
+        #    a threading.Event so the background flash thread doesn't block Qt.
         self.log_signal.emit("Unlocking keyboard and rebooting into DFU mode...")
-        print("[dfu] web: unlocking and rebooting into DFU mode")
+        print("[dfu] web: requesting unlock from main thread")
+        self._unlock_event.clear()
+        self._unlock_request_signal.emit(self.device.keyboard)
+        self._unlock_event.wait()
+        if not self._unlock_result:
+            print("[dfu] web: unlock failed or cancelled")
+            self.error_signal.emit(
+                "Error: Keyboard could not be unlocked.\n"
+                "Use Security > Unlock and try again."
+            )
+            return
+        print("[dfu] web: unlock done, sending reset")
         try:
-            Unlocker.unlock(self.device.keyboard)
             self.device.keyboard.reset()
         except Exception as e:
-            # reset() sends 0x0B then calls dev.close() (no-op on web).
-            # The keyboard disconnects immediately after the command is sent,
-            # so a read timeout here is normal and not a failure.
+            # reset() sends 0x0B then the device disconnects; a read timeout
+            # or OSError on close is expected and not a failure.
             self.log_signal.emit("Note: {}".format(e))
             print("[dfu] web: note during reboot:", e)
 
@@ -580,6 +599,17 @@ class DfuFlasher(BasicEditor):
     def _on_error(self, msg):
         self.log(msg)
         self.unlock_ui(force_refresh=False)
+
+    def _on_unlock_request(self, keyboard):
+        """Run Unlocker on the main thread; called via signal from flash thread."""
+        print("[dfu] web: main thread running Unlocker.unlock()")
+        try:
+            result = Unlocker.unlock(keyboard)
+        except Exception as e:
+            print("[dfu] web: Unlocker.unlock() raised:", e)
+            result = False
+        self._unlock_result = bool(result)
+        self._unlock_event.set()
 
     # ── Post-flash reconnect + restore (desktop only) ─────────────────────────
 
