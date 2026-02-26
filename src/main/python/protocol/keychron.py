@@ -746,7 +746,66 @@ class ProtocolKeychron(BaseProtocol):
             and data[2] == KC_SUCCESS
         )
 
-    # Wireless LPM methods
+    def save_keychron_settings(self):
+        """Serialize all Keychron settings to a JSON-compatible dict for layout save."""
+        data = {}
+        if self.has_keychron_debounce():
+            data["debounce"] = {
+                "type": self.keychron_debounce_type,
+                "time": self.keychron_debounce_time,
+            }
+        if self.has_keychron_nkro() and not self.keychron_nkro_adaptive:
+            data["nkro"] = {"enabled": self.keychron_nkro_enabled}
+        if self.has_keychron_report_rate():
+            data["report_rate"] = self.keychron_report_rate
+        if self.has_keychron_wireless():
+            data["wireless_lpm"] = {
+                "backlit_time": self.keychron_wireless_backlit_time,
+                "idle_time": self.keychron_wireless_idle_time,
+            }
+        if self.has_keychron_snap_click() and self.keychron_snap_click_count > 0:
+            data["snap_click"] = self.keychron_snap_click_entries[:]
+        return data
+
+    def restore_keychron_settings(self, data):
+        """Restore Keychron settings from a dict loaded from a layout file."""
+        if not data:
+            return
+        if "debounce" in data and self.has_keychron_debounce():
+            d = data["debounce"]
+            self.set_keychron_debounce(
+                d.get("type", self.keychron_debounce_type),
+                d.get("time", self.keychron_debounce_time),
+            )
+        if (
+            "nkro" in data
+            and self.has_keychron_nkro()
+            and not self.keychron_nkro_adaptive
+        ):
+            self.set_keychron_nkro(data["nkro"].get("enabled", False))
+        if "report_rate" in data and self.has_keychron_report_rate():
+            rate = data["report_rate"]
+            if self.keychron_report_rate_mask & (1 << rate):
+                self.set_keychron_report_rate(rate)
+        if "wireless_lpm" in data and self.has_keychron_wireless():
+            w = data["wireless_lpm"]
+            self.set_keychron_wireless_lpm(
+                w.get("backlit_time", self.keychron_wireless_backlit_time),
+                w.get("idle_time", self.keychron_wireless_idle_time),
+            )
+        if "snap_click" in data and self.has_keychron_snap_click():
+            for i, entry in enumerate(data["snap_click"]):
+                if i >= self.keychron_snap_click_count:
+                    break
+                self.set_keychron_snap_click(
+                    i,
+                    entry.get("type", 0),
+                    entry.get("key1", 0),
+                    entry.get("key2", 0),
+                )
+            if self.keychron_snap_click_count > 0:
+                self.save_keychron_snap_click()
+
     def _reload_wireless_lpm(self):
         """Load wireless low power mode settings."""
         data = self.usb_send(

@@ -23,7 +23,7 @@ from editor.basic_editor import BasicEditor
 from protocol.keychron import SNAP_CLICK_TYPE_NAMES, SNAP_CLICK_TYPE_NONE
 from keycodes.keycodes import Keycode
 from widgets.key_widget import KeyWidget
-from tabbed_keycodes import keycode_filter_masked
+from tabbed_keycodes import TabbedKeycodes, keycode_filter_masked
 from util import tr
 from vial_device import VialKeyboard
 
@@ -49,6 +49,7 @@ class SnapClickEntry(QFrame):
         layout.addWidget(QLabel(tr("SnapClick", "Key 1:")))
         self.key1_widget = KeyWidget(keycode_filter=keycode_filter_masked)
         self.key1_widget.changed.connect(lambda: self.on_key_changed(1))
+        self.key1_widget.changed.connect(self._advance_to_key2)
         layout.addWidget(self.key1_widget)
 
         # Key 2 widget
@@ -118,6 +119,16 @@ class SnapClickEntry(QFrame):
         if self._updating:
             return
         self.parent_editor.update_entry_key(self.index, key_num, self._get_key(key_num))
+
+    def _advance_to_key2(self):
+        """After Key 1 is assigned, automatically open the keycode tray for Key 2."""
+        if self._updating:
+            return
+        # Simulate clicking Key 2: select its active_key and open the tray
+        if self.key2_widget.widgets:
+            self.key2_widget.active_key = self.key2_widget.widgets[0]
+            self.key2_widget.active_mask = False
+            TabbedKeycodes.open_tray(self.key2_widget, keycode_filter_masked)
 
     def _get_key(self, key_num):
         """Get raw keycode for key 1 or 2."""

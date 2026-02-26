@@ -619,6 +619,8 @@ class Keyboard(
         data["key_override"] = self.save_key_override()
         data["alt_repeat_key"] = self.save_alt_repeat_key()
         data["settings"] = self.settings
+        if hasattr(self, "save_keychron_settings"):
+            data["keychron"] = self.save_keychron_settings()
 
         return json.dumps(data).encode("utf-8")
 
@@ -660,6 +662,9 @@ class Keyboard(
             qsid = int(qsid)
             if QmkSettings.is_qsid_supported(qsid):
                 self.qmk_settings_set(qsid, value)
+
+        if hasattr(self, "restore_keychron_settings"):
+            self.restore_keychron_settings(data.get("keychron", {}))
 
     def reset(self):
         self.usb_send(self.dev, struct.pack("B", 0xB))
