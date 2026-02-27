@@ -774,6 +774,13 @@ class ProtocolKeychron(BaseProtocol):
             data["snap_click"] = self.keychron_snap_click_entries[:]
         if self.has_keychron_rgb():
             rgb = {}
+            # Save the active VialRGB global effect so we can re-apply it on
+            # restore — without this the global effect keeps running on top of
+            # restored per-key colors.
+            if getattr(self, "lighting_vialrgb", False):
+                rgb["vialrgb_mode"] = getattr(self, "rgb_mode", 0)
+                rgb["vialrgb_speed"] = getattr(self, "rgb_speed", 128)
+                rgb["vialrgb_hsv"] = list(getattr(self, "rgb_hsv", (0, 255, 255)))
             rgb["per_key_rgb_type"] = self.keychron_per_key_rgb_type
             # Store colors as [H, S, V] lists (JSON doesn't support tuples)
             rgb["per_key_colors"] = [list(c) for c in self.keychron_per_key_colors]
@@ -890,6 +897,21 @@ class ProtocolKeychron(BaseProtocol):
                     self.set_mixed_rgb_effect_list(region, 0, effects)
             # Flush all RGB changes to EEPROM
             self.save_keychron_rgb()
+            # Restore the active VialRGB global effect (mode/speed/HSV).
+            # This must happen AFTER save_keychron_rgb() so the per-key data
+            # is already written, and AFTER setting the mode so it takes effect
+            # immediately without bleed from the previously-active effect.
+            if getattr(self, "lighting_vialrgb", False) and "vialrgb_mode" in rgb:
+                saved_mode = rgb["vialrgb_mode"]
+                saved_speed = rgb.get("vialrgb_speed", 128)
+                saved_hsv = rgb.get("vialrgb_hsv", [0, 255, 255])
+                # Apply the saved state to firmware RAM (no-EEPROM variant used
+                # internally by _vialrgb_set_mode) then persist via save_rgb().
+                self.rgb_mode = saved_mode
+                self.rgb_speed = saved_speed
+                self.rgb_hsv = tuple(saved_hsv)
+                self._vialrgb_set_mode()
+                self.save_rgb()
         if "analog" in data and self.has_keychron_analog():
             analog = data["analog"]
             rows = getattr(self, "rows", 0)

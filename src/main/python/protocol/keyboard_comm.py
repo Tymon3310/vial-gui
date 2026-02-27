@@ -783,8 +783,6 @@ class Keyboard(
         )
 
     def _vialrgb_set_mode(self):
-        import logging
-
         # Ensure all values are valid integers before packing
         mode = getattr(self, "rgb_mode", None)
         if mode is None or not isinstance(mode, int) or mode < 0:
@@ -802,15 +800,6 @@ class Keyboard(
         h = max(0, min(255, int(hsv[0]) if hsv[0] is not None else 0))
         s = max(0, min(255, int(hsv[1]) if hsv[1] is not None else 255))
         v = max(0, min(255, int(hsv[2]) if hsv[2] is not None else 255))
-
-        logging.info(
-            "VialRGB: Sending SET_MODE - mode=%d speed=%d h=%d s=%d v=%d",
-            mode,
-            speed,
-            h,
-            s,
-            v,
-        )
 
         self.usb_send(
             self.dev,

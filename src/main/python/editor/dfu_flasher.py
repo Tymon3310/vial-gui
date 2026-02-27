@@ -21,6 +21,7 @@ Web (Emscripten) flow:
 
 import datetime
 import json
+import re
 import subprocess
 import sys
 import time
@@ -80,6 +81,9 @@ def _run_streaming(cmd, line_cb, timeout=120):
     Run a subprocess, calling line_cb(line) for each line of output as it
     arrives (stderr merged into stdout).  Returns the exit code, or -1 on
     error.  Raises FileNotFoundError if the binary is not found.
+
+    dfu-util uses \\r (not \\n) to overwrite its progress line in-place, so we
+    read raw chunks and split on both \\r and \\n to surface each update.
     """
     try:
         proc = subprocess.Popen(
@@ -91,13 +95,28 @@ def _run_streaming(cmd, line_cb, timeout=120):
         raise
 
     deadline = time.monotonic() + timeout
+    buf = ""
     try:
-        for raw in proc.stdout:
-            line_cb(raw.decode("utf-8", errors="replace").rstrip())
+        while True:
+            chunk = proc.stdout.read(256)
+            if not chunk:
+                break
+            buf += chunk.decode("utf-8", errors="replace")
+            # Split on both \r and \n so dfu-util's in-place progress updates
+            # are delivered as individual calls to line_cb.
+            parts = re.split(r"[\r\n]", buf)
+            buf = parts[-1]  # last part may be incomplete
+            for part in parts[:-1]:
+                stripped = part.strip()
+                if stripped:
+                    line_cb(stripped)
             if time.monotonic() > deadline:
                 proc.kill()
                 proc.wait()
                 return -1
+        # Flush any remaining buffered text
+        if buf.strip():
+            line_cb(buf.strip())
         proc.wait()
         return proc.returncode
     except Exception:
@@ -114,8 +133,14 @@ def _dfu_device_present():
 
 def _flash_dfu(firmware_path, log_cb, progress_cb):
     """
-    Flash firmware using dfu-util, streaming output line-by-line to log_cb.
+    Flash firmware using dfu-util, streaming output line-by-line to log_cb
+    and reporting fractional progress (0.0–1.0) to progress_cb.
     Returns (success: bool, message: str).
+
+    dfu-util progress lines look like:
+        Erase    [=====     ]  50%        65536 bytes
+        Download [=====     ]  50%        65536 bytes
+    Erase maps to bar 5–50%, Download/Upload maps to 50–100%.
     """
     # :leave tells STM32 DFU to jump to the application immediately after
     # flashing, so the keyboard reboots automatically without needing a replug.
@@ -132,10 +157,33 @@ def _flash_dfu(firmware_path, log_cb, progress_cb):
         firmware_path,
     ]
     log_cb("Running: {}".format(" ".join(cmd)))
-    progress_cb(0.1)
+    progress_cb(0.05)
+
+    # Regex matching dfu-util's progress line, e.g.:
+    #   "Erase    \t[========  ]  80%        102400 bytes"
+    #   "Download \t[========  ]  80%        102400 bytes"
+    # dfu-util has two phases: Erase (0–50% of bar) and Download (50–100%).
+    _progress_re = re.compile(r"^(Erase|Download|Upload)\s+\[.*?\]\s+(\d+)%")
+
+    def _line_cb(line):
+        m = _progress_re.match(line)
+        if m:
+            phase = m.group(1)
+            pct = int(m.group(2))
+            if phase == "Erase":
+                # Erase phase: map 0–100% → bar 5%–50%
+                progress_cb(0.05 + pct * 0.45 / 100.0)
+            else:
+                # Download/Upload phase: map 0–100% → bar 50%–100%
+                progress_cb(0.50 + pct * 0.50 / 100.0)
+            # Only log the 100% line to avoid flooding the log box
+            if pct == 100:
+                log_cb(line)
+        else:
+            log_cb(line)
 
     try:
-        rc = _run_streaming(cmd, log_cb, timeout=120)
+        rc = _run_streaming(cmd, _line_cb, timeout=120)
     except FileNotFoundError:
         return (
             False,

@@ -2,8 +2,18 @@
 from PyQt5 import QtCore
 from PyQt5.QtCore import pyqtSignal, QObject
 from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import QWidget, QPushButton, QHBoxLayout, QSizePolicy, QGridLayout, QLabel, QSlider, \
-    QComboBox, QColorDialog, QCheckBox
+from PyQt5.QtWidgets import (
+    QWidget,
+    QPushButton,
+    QHBoxLayout,
+    QSizePolicy,
+    QGridLayout,
+    QLabel,
+    QSlider,
+    QComboBox,
+    QColorDialog,
+    QCheckBox,
+)
 
 from editor.basic_editor import BasicEditor
 from widgets.clickable_label import ClickableLabel
@@ -12,7 +22,6 @@ from vial_device import VialKeyboard
 
 
 class QmkRgblightEffect:
-
     def __init__(self, idx, name, color_picker):
         self.idx = idx
         self.name = name
@@ -61,7 +70,6 @@ QMK_RGBLIGHT_EFFECTS = [
 
 
 class VialRGBEffect:
-
     def __init__(self, idx, name):
         self.idx = idx
         self.name = name
@@ -117,7 +125,6 @@ VIALRGB_EFFECTS = [
 
 
 class BasicHandler(QObject):
-
     update = pyqtSignal()
 
     def __init__(self, container):
@@ -157,7 +164,6 @@ class BasicHandler(QObject):
 
 
 class QmkRgblightHandler(BasicHandler):
-
     def __init__(self, container):
         super().__init__(container)
 
@@ -170,12 +176,16 @@ class QmkRgblightHandler(BasicHandler):
             self.underglow_effect.addItem(ef.name)
         container.addWidget(self.underglow_effect, row, 1)
 
-        self.lbl_underglow_brightness = QLabel(tr("RGBConfigurator", "Underglow Brightness"))
+        self.lbl_underglow_brightness = QLabel(
+            tr("RGBConfigurator", "Underglow Brightness")
+        )
         container.addWidget(self.lbl_underglow_brightness, row + 1, 0)
         self.underglow_brightness = QSlider(QtCore.Qt.Horizontal)
         self.underglow_brightness.setMinimum(0)
         self.underglow_brightness.setMaximum(255)
-        self.underglow_brightness.valueChanged.connect(self.on_underglow_brightness_changed)
+        self.underglow_brightness.valueChanged.connect(
+            self.on_underglow_brightness_changed
+        )
         container.addWidget(self.underglow_brightness, row + 1, 1)
 
         self.lbl_underglow_color = QLabel(tr("RGBConfigurator", "Underglow Color"))
@@ -184,10 +194,18 @@ class QmkRgblightHandler(BasicHandler):
         self.underglow_color.clicked.connect(self.on_underglow_color)
         container.addWidget(self.underglow_color, row + 2, 1)
 
-        self.underglow_effect.currentIndexChanged.connect(self.on_underglow_effect_changed)
+        self.underglow_effect.currentIndexChanged.connect(
+            self.on_underglow_effect_changed
+        )
 
-        self.widgets = [self.lbl_underglow_effect, self.underglow_effect, self.lbl_underglow_brightness,
-                        self.underglow_brightness, self.lbl_underglow_color, self.underglow_color]
+        self.widgets = [
+            self.lbl_underglow_effect,
+            self.underglow_effect,
+            self.lbl_underglow_brightness,
+            self.underglow_brightness,
+            self.lbl_underglow_color,
+            self.underglow_color,
+        ]
 
     def update_from_keyboard(self):
         if not self.valid():
@@ -195,10 +213,15 @@ class QmkRgblightHandler(BasicHandler):
 
         self.underglow_brightness.setValue(self.device.keyboard.underglow_brightness)
         self.underglow_effect.setCurrentIndex(self.device.keyboard.underglow_effect)
-        self.underglow_color.setStyleSheet("QWidget { background-color: %s}" % self.current_color().name())
+        self.underglow_color.setStyleSheet(
+            "QWidget { background-color: %s}" % self.current_color().name()
+        )
 
     def valid(self):
-        return isinstance(self.device, VialKeyboard) and self.device.keyboard.lighting_qmk_rgblight
+        return (
+            isinstance(self.device, VialKeyboard)
+            and self.device.keyboard.lighting_qmk_rgblight
+        )
 
     def on_underglow_brightness_changed(self, value):
         self.device.keyboard.set_qmk_rgblight_brightness(value)
@@ -221,42 +244,59 @@ class QmkRgblightHandler(BasicHandler):
         color = self.dlg_color.selectedColor()
         if not color.isValid():
             return
-        self.underglow_color.setStyleSheet("QWidget { background-color: %s}" % color.name())
+        self.underglow_color.setStyleSheet(
+            "QWidget { background-color: %s}" % color.name()
+        )
         h, s, v, a = color.getHsvF()
         if h < 0:
             h = 0
-        self.device.keyboard.set_qmk_rgblight_color(int(255 * h), int(255 * s), int(255 * v))
+        self.device.keyboard.set_qmk_rgblight_color(
+            int(255 * h), int(255 * s), int(255 * v)
+        )
         self.update.emit()
 
     def current_color(self):
-        return QColor.fromHsvF(self.device.keyboard.underglow_color[0] / 255.0,
-                               self.device.keyboard.underglow_color[1] / 255.0,
-                               self.device.keyboard.underglow_brightness / 255.0)
+        return QColor.fromHsvF(
+            self.device.keyboard.underglow_color[0] / 255.0,
+            self.device.keyboard.underglow_color[1] / 255.0,
+            self.device.keyboard.underglow_brightness / 255.0,
+        )
 
 
 class QmkBacklightHandler(BasicHandler):
-
     def __init__(self, container):
         super().__init__(container)
 
         row = container.rowCount()
 
-        self.lbl_backlight_brightness = QLabel(tr("RGBConfigurator", "Backlight Brightness"))
+        self.lbl_backlight_brightness = QLabel(
+            tr("RGBConfigurator", "Backlight Brightness")
+        )
         container.addWidget(self.lbl_backlight_brightness, row, 0)
         self.backlight_brightness = QSlider(QtCore.Qt.Horizontal)
         self.backlight_brightness.setMinimum(0)
         self.backlight_brightness.setMaximum(255)
-        self.backlight_brightness.valueChanged.connect(self.on_backlight_brightness_changed)
+        self.backlight_brightness.valueChanged.connect(
+            self.on_backlight_brightness_changed
+        )
         container.addWidget(self.backlight_brightness, row, 1)
 
-        self.lbl_backlight_breathing = QLabel(tr("RGBConfigurator", "Backlight Breathing"))
+        self.lbl_backlight_breathing = QLabel(
+            tr("RGBConfigurator", "Backlight Breathing")
+        )
         container.addWidget(self.lbl_backlight_breathing, row + 1, 0)
         self.backlight_breathing = QCheckBox()
-        self.backlight_breathing.stateChanged.connect(self.on_backlight_breathing_changed)
+        self.backlight_breathing.stateChanged.connect(
+            self.on_backlight_breathing_changed
+        )
         container.addWidget(self.backlight_breathing, row + 1, 1)
 
-        self.widgets = [self.lbl_backlight_brightness, self.backlight_brightness, self.lbl_backlight_breathing,
-                        self.backlight_breathing]
+        self.widgets = [
+            self.lbl_backlight_brightness,
+            self.backlight_brightness,
+            self.lbl_backlight_breathing,
+            self.backlight_breathing,
+        ]
 
     def update_from_keyboard(self):
         if not self.valid():
@@ -266,7 +306,10 @@ class QmkBacklightHandler(BasicHandler):
         self.backlight_breathing.setChecked(self.device.keyboard.backlight_effect == 1)
 
     def valid(self):
-        return isinstance(self.device, VialKeyboard) and self.device.keyboard.lighting_qmk_backlight
+        return (
+            isinstance(self.device, VialKeyboard)
+            and self.device.keyboard.lighting_qmk_backlight
+        )
 
     def on_backlight_brightness_changed(self, value):
         self.device.keyboard.set_qmk_backlight_brightness(value)
@@ -276,7 +319,6 @@ class QmkBacklightHandler(BasicHandler):
 
 
 class VialRGBHandler(BasicHandler):
-
     def __init__(self, container):
         super().__init__(container)
 
@@ -314,8 +356,16 @@ class VialRGBHandler(BasicHandler):
         self.rgb_speed.valueChanged.connect(self.on_rgb_speed_changed)
         container.addWidget(self.rgb_speed, row + 3, 1)
 
-        self.widgets = [self.lbl_rgb_effect, self.rgb_effect, self.lbl_rgb_brightness, self.rgb_brightness,
-                        self.lbl_rgb_color, self.rgb_color, self.lbl_rgb_speed, self.rgb_speed]
+        self.widgets = [
+            self.lbl_rgb_effect,
+            self.rgb_effect,
+            self.lbl_rgb_brightness,
+            self.rgb_brightness,
+            self.lbl_rgb_color,
+            self.rgb_color,
+            self.lbl_rgb_speed,
+            self.rgb_speed,
+        ]
 
         self.effects = []
 
@@ -343,13 +393,15 @@ class VialRGBHandler(BasicHandler):
         h, s, v, a = color.getHsvF()
         if h < 0:
             h = 0
-        self.keyboard.set_vialrgb_color(int(255 * h), int(255 * s), self.keyboard.rgb_hsv[2])
+        self.keyboard.set_vialrgb_color(
+            int(255 * h), int(255 * s), self.keyboard.rgb_hsv[2]
+        )
         self.update.emit()
 
     def current_color(self):
-        return QColor.fromHsvF(self.keyboard.rgb_hsv[0] / 255.0,
-                               self.keyboard.rgb_hsv[1] / 255.0,
-                               1.0)
+        return QColor.fromHsvF(
+            self.keyboard.rgb_hsv[0] / 255.0, self.keyboard.rgb_hsv[1] / 255.0, 1.0
+        )
 
     def rebuild_effects(self):
         self.effects = []
@@ -357,30 +409,44 @@ class VialRGBHandler(BasicHandler):
             if effect.idx in self.keyboard.rgb_supported_effects:
                 self.effects.append(effect)
 
+        self.rgb_effect.blockSignals(True)
         self.rgb_effect.clear()
         for effect in self.effects:
             self.rgb_effect.addItem(effect.name)
+        self.rgb_effect.blockSignals(False)
 
     def update_from_keyboard(self):
         if not self.valid():
             return
 
-        self.rebuild_effects()
-        for x, effect in enumerate(self.effects):
-            if effect.idx == self.keyboard.rgb_mode:
-                self.rgb_effect.setCurrentIndex(x)
-                break
-        self.rgb_brightness.setMaximum(self.keyboard.rgb_maximum_brightness)
-        self.rgb_brightness.setValue(self.keyboard.rgb_hsv[2])
-        self.rgb_speed.setValue(self.keyboard.rgb_speed)
-        self.rgb_color.setStyleSheet("QWidget { background-color: %s}" % self.current_color().name())
+        self.rgb_effect.blockSignals(True)
+        self.rgb_brightness.blockSignals(True)
+        self.rgb_speed.blockSignals(True)
+        try:
+            self.rebuild_effects()
+            for x, effect in enumerate(self.effects):
+                if effect.idx == self.keyboard.rgb_mode:
+                    self.rgb_effect.setCurrentIndex(x)
+                    break
+            self.rgb_brightness.setMaximum(self.keyboard.rgb_maximum_brightness)
+            self.rgb_brightness.setValue(self.keyboard.rgb_hsv[2])
+            self.rgb_speed.setValue(self.keyboard.rgb_speed)
+            self.rgb_color.setStyleSheet(
+                "QWidget { background-color: %s}" % self.current_color().name()
+            )
+        finally:
+            self.rgb_effect.blockSignals(False)
+            self.rgb_brightness.blockSignals(False)
+            self.rgb_speed.blockSignals(False)
 
     def valid(self):
-        return isinstance(self.device, VialKeyboard) and self.device.keyboard.lighting_vialrgb
+        return (
+            isinstance(self.device, VialKeyboard)
+            and self.device.keyboard.lighting_vialrgb
+        )
 
 
 class RGBConfigurator(BasicEditor):
-
     def __init__(self):
         super().__init__()
 
@@ -399,7 +465,11 @@ class RGBConfigurator(BasicEditor):
         self.handler_rgblight.update.connect(self.update_from_keyboard)
         self.handler_vialrgb = VialRGBHandler(self.container)
         self.handler_vialrgb.update.connect(self.update_from_keyboard)
-        self.handlers = [self.handler_backlight, self.handler_rgblight, self.handler_vialrgb]
+        self.handlers = [
+            self.handler_backlight,
+            self.handler_rgblight,
+            self.handler_vialrgb,
+        ]
 
         self.addStretch()
         buttons = QHBoxLayout()
@@ -413,9 +483,11 @@ class RGBConfigurator(BasicEditor):
         self.device.keyboard.save_rgb()
 
     def valid(self):
-        return isinstance(self.device, VialKeyboard) and \
-               (self.device.keyboard.lighting_qmk_rgblight or self.device.keyboard.lighting_qmk_backlight
-                or self.device.keyboard.lighting_vialrgb)
+        return isinstance(self.device, VialKeyboard) and (
+            self.device.keyboard.lighting_qmk_rgblight
+            or self.device.keyboard.lighting_qmk_backlight
+            or self.device.keyboard.lighting_vialrgb
+        )
 
     def block_signals(self):
         for h in self.handlers:
