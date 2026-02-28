@@ -55,7 +55,7 @@ from protocol.keychron import ProtocolKeychron
 from unlocker import Unlocker
 from util import MSG_LEN, hid_send
 
-SUPPORTED_VIA_PROTOCOL = [-1, 9]
+SUPPORTED_VIA_PROTOCOL = [-1, 9, 11]
 SUPPORTED_VIAL_PROTOCOL = [-1, 0, 1, 2, 3, 4, 5, 6]
 
 
@@ -370,7 +370,11 @@ class Keyboard(
 
             self.rgb_supported_effects = {0}
             max_effect = 0
-            while max_effect < 0xFFFF:
+            MAX_ITERATIONS = 1000
+            for _ in range(MAX_ITERATIONS):
+                if max_effect >= 0xFFFF:
+                    break
+                prev_max = max_effect
                 data = self.usb_send(
                     self.dev,
                     struct.pack(
@@ -385,6 +389,9 @@ class Keyboard(
                     if value != 0xFFFF:
                         self.rgb_supported_effects.add(value)
                     max_effect = max(max_effect, value)
+                # If max_effect didn't advance, the keyboard has no more effects
+                if max_effect == prev_max:
+                    break
 
     def reload_rgb(self):
         if self.lighting_qmk_rgblight:

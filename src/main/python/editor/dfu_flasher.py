@@ -28,7 +28,7 @@ import time
 import traceback
 import threading
 
-from PyQt5.QtCore import pyqtSignal, QCoreApplication
+from PyQt5.QtCore import pyqtSignal, QCoreApplication, QTimer
 from PyQt5.QtGui import QFontDatabase
 from PyQt5.QtWidgets import (
     QHBoxLayout,
@@ -336,6 +336,23 @@ class DfuFlasher(BasicEditor):
             self.log("Error: Please select a firmware .bin file first.")
             return
 
+        # Validate the firmware file before proceeding
+        import os
+
+        if not os.path.isfile(self.selected_firmware_path):
+            self.log("Error: File not found: {}".format(self.selected_firmware_path))
+            return
+        file_size = os.path.getsize(self.selected_firmware_path)
+        if file_size == 0:
+            self.log("Error: Firmware file is empty.")
+            return
+        if file_size > 2 * 1024 * 1024:
+            self.log(
+                "Error: Firmware file is too large ({} bytes). "
+                "Expected a .bin file under 2 MB.".format(file_size)
+            )
+            return
+
         self.log("Preparing to flash...")
         print("[dfu] desktop flash started: firmware =", self.selected_firmware_path)
         self.lock_ui()
@@ -499,7 +516,6 @@ class DfuFlasher(BasicEditor):
         else:
             self.log("Skipping layout backup.")
         # Yield to browser event loop before the next step
-        from PyQt5.QtCore import QTimer
 
         QTimer.singleShot(0, self._web_step_reset_keyboard)
 
@@ -512,7 +528,6 @@ class DfuFlasher(BasicEditor):
             # reset() sends the reboot command then the device disconnects;
             # an OSError or read timeout on close is expected and not a failure.
             self.log("Note: {}".format(e))
-        from PyQt5.QtCore import QTimer
 
         # Give the keyboard 3 s to enumerate as a DFU device before prompting.
         self.log(
@@ -528,7 +543,6 @@ class DfuFlasher(BasicEditor):
         # overlay, so the poll loop starts clean.
         vialglue.dfu_show_usb_picker()
         self.log("Waiting for DFU device selection...")
-        from PyQt5.QtCore import QTimer
 
         QTimer.singleShot(200, self._web_step_poll_usb_ready)
 
@@ -543,22 +557,17 @@ class DfuFlasher(BasicEditor):
             return
         s = status.get("status", "")
         if s == "pending":
-            from PyQt5.QtCore import QTimer
-
             QTimer.singleShot(200, self._web_step_poll_usb_ready)
         elif s == "usb_ready":
             self.log("USB DFU device selected.")
             self._web_step_start_flash()
         elif s == "log":
             self.log(status.get("msg", ""))
-            from PyQt5.QtCore import QTimer
 
             QTimer.singleShot(200, self._web_step_poll_usb_ready)
         elif s == "error":
             self._web_error(status.get("msg", "unknown"))
         else:
-            from PyQt5.QtCore import QTimer
-
             QTimer.singleShot(200, self._web_step_poll_usb_ready)
 
     def _web_step_start_flash(self):
@@ -568,7 +577,6 @@ class DfuFlasher(BasicEditor):
         self.log("Starting DFU flash ({} bytes)...".format(len(firmware_bytes)))
         self.progress_bar.setValue(5)
         vialglue.dfu_flash_start(firmware_bytes)
-        from PyQt5.QtCore import QTimer
 
         QTimer.singleShot(200, self._web_step_poll_flash_done)
 
@@ -583,8 +591,6 @@ class DfuFlasher(BasicEditor):
             return
         s = status.get("status", "")
         if s == "pending":
-            from PyQt5.QtCore import QTimer
-
             QTimer.singleShot(200, self._web_step_poll_flash_done)
         elif s == "done":
             self.log("Flash complete.")
@@ -593,19 +599,15 @@ class DfuFlasher(BasicEditor):
         elif s == "progress":
             pct = status.get("pct", 0)
             self.progress_bar.setValue(int(pct * 100))
-            from PyQt5.QtCore import QTimer
 
             QTimer.singleShot(200, self._web_step_poll_flash_done)
         elif s == "log":
             self.log(status.get("msg", ""))
-            from PyQt5.QtCore import QTimer
 
             QTimer.singleShot(200, self._web_step_poll_flash_done)
         elif s == "error":
             self._web_error(status.get("msg", "unknown"))
         else:
-            from PyQt5.QtCore import QTimer
-
             QTimer.singleShot(200, self._web_step_poll_flash_done)
 
     def _web_step_maybe_reconnect(self):
@@ -618,7 +620,6 @@ class DfuFlasher(BasicEditor):
 
             vialglue.dfu_show_hid_picker()
             # dfu_show_hid_picker resets dfu_status_ready to 0
-            from PyQt5.QtCore import QTimer
 
             QTimer.singleShot(200, self._web_step_poll_reconnect)
         else:
@@ -635,8 +636,6 @@ class DfuFlasher(BasicEditor):
             return
         s = status.get("status", "")
         if s == "pending":
-            from PyQt5.QtCore import QTimer
-
             QTimer.singleShot(200, self._web_step_poll_reconnect)
         elif s == "reconnected":
             self.log("Keyboard reconnected. Restoring layout...")
@@ -648,8 +647,6 @@ class DfuFlasher(BasicEditor):
             )
             self._on_complete("Flash successful! (Layout restore skipped)")
         else:
-            from PyQt5.QtCore import QTimer
-
             QTimer.singleShot(200, self._web_step_poll_reconnect)
 
     # ── Signals (called on main thread) ───────────────────────────────────────
@@ -695,8 +692,8 @@ class DfuFlasher(BasicEditor):
 
     def _wait_and_restore(self):
         """
-        Poll for the Vial keyboard to come back (runs on main thread so we can
-        keep the UI responsive via processEvents).
+        Poll for the Vial keyboard to come back using a QTimer so the UI
+        thread is never blocked.
         """
         if not self.uid_restore:
             self.log("No UID recorded — skipping reconnect wait.")
@@ -714,14 +711,40 @@ class DfuFlasher(BasicEditor):
                 REBOOT_WAIT_TIMEOUT
             )
         )
-        deadline = time.monotonic() + REBOOT_WAIT_TIMEOUT
-        found = None
-        while time.monotonic() < deadline and found is None:
-            QCoreApplication.processEvents()
-            time.sleep(1)
-            found = self._find_keyboard_with_uid(self.uid_restore)
+        self._restore_deadline = time.monotonic() + REBOOT_WAIT_TIMEOUT
+        self._restore_timer = QTimer()
+        self._restore_timer.timeout.connect(self._poll_keyboard_restore)
+        self._restore_timer.start(1000)
 
-        if found is None:
+    def _poll_keyboard_restore(self):
+        """Called every second by QTimer to check if the keyboard is back."""
+        found = self._find_keyboard_with_uid(self.uid_restore)
+
+        if found is not None:
+            self._restore_timer.stop()
+            print("[dfu] desktop: keyboard found, restoring layout")
+            self.log("Keyboard found. Restoring layout...")
+            if self.layout_restore:
+                try:
+                    found.open()
+                    self.device = found
+                    found.keyboard.restore_layout(self.layout_restore)
+                    found.keyboard.lock()
+                    found.close()
+                    self.log("Layout restored.")
+                    print("[dfu] desktop: layout restored successfully")
+                except Exception as e:
+                    print("[dfu] desktop: layout restore failed:", e)
+                    self.log(
+                        "Warning: Layout restore failed: {}\n{}".format(
+                            e, traceback.format_exc()
+                        )
+                    )
+            self.unlock_ui()
+            return
+
+        if time.monotonic() > self._restore_deadline:
+            self._restore_timer.stop()
             print("[dfu] desktop: keyboard did not re-enumerate within timeout")
             self.log(
                 "Keyboard did not re-enumerate within {}s. "
@@ -731,29 +754,6 @@ class DfuFlasher(BasicEditor):
             )
             self.unlock_ui()
             return
-
-        print("[dfu] desktop: keyboard found, restoring layout")
-        self.log("Keyboard found. Restoring layout...")
-
-        if self.layout_restore:
-            try:
-                found.open()
-                self.device = found
-                QCoreApplication.processEvents()
-                found.keyboard.restore_layout(self.layout_restore)
-                found.keyboard.lock()
-                found.close()
-                self.log("Layout restored.")
-                print("[dfu] desktop: layout restored successfully")
-            except Exception as e:
-                print("[dfu] desktop: layout restore failed:", e)
-                self.log(
-                    "Warning: Layout restore failed: {}\n{}".format(
-                        e, traceback.format_exc()
-                    )
-                )
-
-        self.unlock_ui()
 
     def _find_keyboard_with_uid(self, uid):
         """Return the first VialKeyboard whose UID matches, or None."""
@@ -768,7 +768,7 @@ class DfuFlasher(BasicEditor):
                 dev_uid = dev.get_uid()
                 if dev_uid and dev_uid == uid:
                     return dev
-            except Exception:
+            except OSError:
                 pass
         return None
 

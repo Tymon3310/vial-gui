@@ -4,19 +4,17 @@ from PyQt5.QtCore import QObject, pyqtSignal
 
 
 class AutorefreshLocker:
-
     def __init__(self, autorefresh):
         self.autorefresh = autorefresh
 
     def __enter__(self):
         self.autorefresh._lock()
 
-    def __exit__(self):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         self.autorefresh._unlock()
 
 
 class Autorefresh(QObject):
-
     instance = None
     devices_updated = pyqtSignal(object, bool)
 
@@ -67,14 +65,18 @@ class Autorefresh(QObject):
         if self.current_device is not None:
             self.current_device.close()
         self.current_device = None
-        if idx >= 0:
+        if 0 <= idx < len(self.devices):
             self.current_device = self.devices[idx]
 
         if self.current_device is not None:
             if self.current_device.sideload:
                 self.current_device.open(self.thread.sideload_json)
             elif self.current_device.via_stack:
-                self.current_device.open(self.thread.via_stack_json["definitions"][self.current_device.via_id])
+                self.current_device.open(
+                    self.thread.via_stack_json["definitions"][
+                        self.current_device.via_id
+                    ]
+                )
             else:
                 self.current_device.open(None)
         self.thread.set_device(self.current_device)

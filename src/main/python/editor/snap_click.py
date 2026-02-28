@@ -8,7 +8,7 @@ but for standard mechanical switches.
 """
 
 from PyQt5 import QtCore
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
@@ -20,7 +20,11 @@ from PyQt5.QtWidgets import (
 )
 
 from editor.basic_editor import BasicEditor
-from protocol.keychron import SNAP_CLICK_TYPE_NAMES, SNAP_CLICK_TYPE_NONE
+from protocol.keychron import (
+    SNAP_CLICK_TYPE_NAMES,
+    SNAP_CLICK_TYPE_TOOLTIPS,
+    SNAP_CLICK_TYPE_NONE,
+)
 from keycodes.keycodes import Keycode
 from widgets.key_widget import KeyWidget
 from tabbed_keycodes import TabbedKeycodes, keycode_filter_masked
@@ -61,9 +65,13 @@ class SnapClickEntry(QFrame):
         # SOCD Type dropdown
         layout.addWidget(QLabel(tr("SnapClick", "Mode:")))
         self.type_combo = QComboBox()
-        for type_id, name in SNAP_CLICK_TYPE_NAMES.items():
+        for idx, (type_id, name) in enumerate(SNAP_CLICK_TYPE_NAMES.items()):
             self.type_combo.addItem(name, type_id)
+            tooltip = SNAP_CLICK_TYPE_TOOLTIPS.get(type_id, "")
+            self.type_combo.setItemData(idx, tooltip, Qt.ToolTipRole)
         self.type_combo.currentIndexChanged.connect(self.on_type_changed)
+        self.type_combo.currentIndexChanged.connect(self._update_combo_tooltip)
+        self._update_combo_tooltip()
         layout.addWidget(self.type_combo)
 
         layout.addStretch()
@@ -136,6 +144,12 @@ class SnapClickEntry(QFrame):
             return self._qmk_to_keycode(self.key1_widget.keycode)
         else:
             return self._qmk_to_keycode(self.key2_widget.keycode)
+
+    def _update_combo_tooltip(self):
+        """Keep the combo's own tooltip in sync with the selected mode."""
+        type_id = self.type_combo.currentData()
+        tooltip = SNAP_CLICK_TYPE_TOOLTIPS.get(type_id, "")
+        self.type_combo.setToolTip(tooltip)
 
     def on_type_changed(self):
         """Handle SOCD type change."""

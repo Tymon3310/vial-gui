@@ -437,12 +437,35 @@ class MainWindow(QMainWindow):
             self.tabs.addTab(c, tr("MainWindow", lbl))
 
     def load_via_stack_json(self):
-        from urllib.request import urlopen
+        """Download VIA definitions in a background thread to avoid blocking the UI."""
+        import threading
 
-        with urlopen(
-            "https://github.com/vial-kb/via-keymap-precompiled/raw/main/via_keyboard_stack.json"
-        ) as resp:
-            data = resp.read()
+        def _download():
+            try:
+                from urllib.request import urlopen
+
+                with urlopen(
+                    "https://github.com/vial-kb/via-keymap-precompiled/raw/main/via_keyboard_stack.json",
+                    timeout=30,
+                ) as resp:
+                    data = resp.read()
+                # Schedule UI update on main thread
+                QTimer.singleShot(0, lambda: self._on_via_stack_downloaded(data))
+            except Exception as e:
+                logging.warning("Failed to download VIA definitions: %s", e)
+                QTimer.singleShot(
+                    0,
+                    lambda: QMessageBox.warning(
+                        self,
+                        "",
+                        "Failed to download VIA definitions:\n{}".format(e),
+                    ),
+                )
+
+        threading.Thread(target=_download, daemon=True).start()
+
+    def _on_via_stack_downloaded(self, data):
+        """Handle VIA definitions downloaded in background thread."""
         self.autorefresh.load_via_stack(data)
         # write to cache
         with open(os.path.join(self.cache_path, "via_keyboards.json"), "wb") as cf:

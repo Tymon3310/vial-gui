@@ -102,11 +102,29 @@ SNAP_CLICK_TYPE_NEUTRAL = 5
 
 SNAP_CLICK_TYPE_NAMES = {
     SNAP_CLICK_TYPE_NONE: "Disabled",
-    SNAP_CLICK_TYPE_REGULAR: "Regular SOCD",
-    SNAP_CLICK_TYPE_LAST_INPUT: "Last Input Wins",
-    SNAP_CLICK_TYPE_FIRST_KEY: "First Key Priority",
-    SNAP_CLICK_TYPE_SECOND_KEY: "Second Key Priority",
-    SNAP_CLICK_TYPE_NEUTRAL: "Neutral (Both Cancel)",
+    SNAP_CLICK_TYPE_REGULAR: "Last Key Priority (simple)",
+    SNAP_CLICK_TYPE_LAST_INPUT: "Last Key Priority (re-activates held key)",
+    SNAP_CLICK_TYPE_FIRST_KEY: "Absolute Priority: Key 1",
+    SNAP_CLICK_TYPE_SECOND_KEY: "Absolute Priority: Key 2",
+    SNAP_CLICK_TYPE_NEUTRAL: "Cancel (both keys cancel out)",
+}
+
+SNAP_CLICK_TYPE_TOOLTIPS = {
+    SNAP_CLICK_TYPE_NONE: "This pair is inactive.",
+    SNAP_CLICK_TYPE_REGULAR: "When both keys are pressed, the most recently pressed key wins. "
+    "Releasing either key unregisters only that key.",
+    SNAP_CLICK_TYPE_LAST_INPUT: "When both keys are pressed, the most recently pressed key wins. "
+    "Releasing the winning key re-activates the still-held losing key. "
+    "(Stock launcher 'Last Key Priority')",
+    SNAP_CLICK_TYPE_FIRST_KEY: "Key 1 always takes priority when both are pressed. "
+    "Releasing Key 1 re-activates Key 2 if still held. "
+    "(Stock launcher 'Absolute Priority')",
+    SNAP_CLICK_TYPE_SECOND_KEY: "Key 2 always takes priority when both are pressed. "
+    "Releasing Key 2 re-activates Key 1 if still held. "
+    "(Stock launcher 'Absolute Priority' — reversed)",
+    SNAP_CLICK_TYPE_NEUTRAL: "When both keys are pressed simultaneously, neither key registers. "
+    "Releasing one key re-activates the other. "
+    "(Stock launcher 'Cancel Mode')",
 }
 
 # USB Report Rate dividers
@@ -373,7 +391,7 @@ class ProtocolKeychron(BaseProtocol):
             logging.info(
                 "Keychron: Protocol version: %d", self.keychron_protocol_version
             )
-        except Exception as e:
+        except (OSError, RuntimeError, struct.error) as e:
             logging.warning("Keychron: Exception during protocol version check: %s", e)
             self.keychron_features = 0
             return
@@ -520,10 +538,6 @@ class ProtocolKeychron(BaseProtocol):
 
     def has_keychron_analog(self):
         """Check if Analog Matrix (Hall Effect) is supported."""
-        import os
-
-        if os.environ.get("DEBUG_FORCE_HE", "").lower() in ("1", "true", "yes"):
-            return True
         return bool(getattr(self, "keychron_features", 0) & FEATURE_ANALOG_MATRIX)
 
     def has_keychron_dfu(self):

@@ -8,7 +8,6 @@ from util import MSG_LEN, pad_for_vibl
 
 
 class VialDevice:
-
     def __init__(self, dev):
         self.desc = dev
         self.dev = None
@@ -37,7 +36,6 @@ class VialDevice:
 
 
 class VialKeyboard(VialDevice):
-
     def __init__(self, dev, sideload=False, via_stack=False):
         super().__init__(dev)
         self.via_id = str(dev["vendor_id"] * 65536 + dev["product_id"])
@@ -51,7 +49,9 @@ class VialKeyboard(VialDevice):
         self.keyboard.reload(override_json)
 
     def title(self):
-        s = "{} {}".format(self.desc["manufacturer_string"], self.desc["product_string"]).strip()
+        s = "{} {}".format(
+            self.desc["manufacturer_string"], self.desc["product_string"]
+        ).strip()
         if self.sideload:
             s += " [sideload]"
         elif self.via_stack:
@@ -63,32 +63,40 @@ class VialKeyboard(VialDevice):
             super().open()
         except OSError:
             return b""
-        self.send(b"\xFE\x00" + b"\x00" * 30)
-        data = self.recv(MSG_LEN, timeout_ms=500)
-        super().close()
-        return data[4:12]
+        try:
+            self.send(b"\xfe\x00" + b"\x00" * 30)
+            data = self.recv(MSG_LEN, timeout_ms=500)
+            return data[4:12]
+        finally:
+            super().close()
 
 
 class VialBootloader(VialDevice):
-
     def title(self):
-        return "Vial Bootloader [{:04X}:{:04X}]".format(self.desc["vendor_id"], self.desc["product_id"])
+        return "Vial Bootloader [{:04X}:{:04X}]".format(
+            self.desc["vendor_id"], self.desc["product_id"]
+        )
 
     def get_uid(self):
         try:
             super().open()
         except OSError:
             return b""
-        self.send(pad_for_vibl(b"VC\x01"))
-        data = self.recv(8, timeout_ms=500)
-        super().close()
-        return data
+        try:
+            self.send(pad_for_vibl(b"VC\x01"))
+            data = self.recv(8, timeout_ms=500)
+            return data
+        finally:
+            super().close()
 
 
 class VialDummyKeyboard(VialKeyboard):
-
     def __init__(self):
         self.sideload = True
+        self.via_stack = False
+        self.via_id = "0"
+        self.keyboard = None
+        self.dev = None
         self.desc = {"path": "/dummy/keyboard"}
 
     def open(self, override_json=None):

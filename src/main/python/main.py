@@ -15,11 +15,13 @@ from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtWidgets import QApplication
 
 from main_window import MainWindow
+
 # http://timlehr.com/python-exception-hooks-with-qt-message-box/
 from util import init_logger
 
 if ssl.get_default_verify_paths().cafile is None:
-    os.environ['SSL_CERT_FILE'] = certifi.where()
+    os.environ["SSL_CERT_FILE"] = certifi.where()
+
 
 def show_exception_box(log_msg):
     if QtWidgets.QApplication.instance() is not None:
@@ -35,7 +37,7 @@ class UncaughtHook(QtCore.QObject):
         super(UncaughtHook, self).__init__(*args, **kwargs)
 
         # this registers the exception_hook() function as hook with the Python interpreter
-        sys._excepthook = sys.excepthook
+        self._original_excepthook = sys.excepthook
         sys.excepthook = self.exception_hook
 
         # connect signal to execute the message box function always on main thread
@@ -46,15 +48,19 @@ class UncaughtHook(QtCore.QObject):
             # ignore keyboard interrupt to support console applications
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
         else:
-            log_msg = '\n'.join([''.join(traceback.format_tb(exc_traceback)),
-                                 '{0}: {1}'.format(exc_type.__name__, exc_value)])
+            log_msg = "\n".join(
+                [
+                    "".join(traceback.format_tb(exc_traceback)),
+                    "{0}: {1}".format(exc_type.__name__, exc_value),
+                ]
+            )
 
             # trigger message box show
             self._exception_caught.emit(log_msg)
-        sys._excepthook(exc_type, exc_value, exc_traceback)
+        self._original_excepthook(exc_type, exc_value, exc_traceback)
 
-class VialApplicationContext():
 
+class VialApplicationContext:
     def __init__(self):
         self.bundle_dir = self.get_bundle_dir()
         self.vial_settings = self.load_vial_settings()
@@ -72,7 +78,7 @@ class VialApplicationContext():
         # metadata is correctly configured.
         # https://doc.qt.io/qt-5/qcoreapplication.html#applicationVersion-prop
         # Verify it is, and only set manually on Linux.
-        #if sys.platform.startswith("linux"):
+        # if sys.platform.startswith("linux"):
         result.setApplicationVersion(self.vial_settings["version"])
         return result
 
@@ -107,7 +113,7 @@ class VialApplicationContext():
         return self.real_path(os.path.join("resources", "base", file_name))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # https://pyinstaller.org/en/stable/common-issues-and-pitfalls.html#multi-processing
     freeze_support()
 

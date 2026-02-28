@@ -63,7 +63,8 @@ def hid_send(dev, msg, retries=1):
             data = bytes(dev.read(MSG_LEN, timeout_ms=500))
             if not data:
                 continue
-        except OSError:
+        except OSError as e:
+            logging.debug("HID communication error (retry %d): %s", retries, e)
             continue
         break
 
