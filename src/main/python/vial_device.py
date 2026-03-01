@@ -61,6 +61,12 @@ class VialKeyboard(VialDevice):
                 s = self._title_from_desc()
         else:
             s = self._title_from_desc()
+        # Preserve [2.4G] tag injected by the web bridge path (hidproxy.py)
+        # where the bridge-connected keyboard is a plain VialKeyboard with
+        # "[2.4G]" appended to product_string.
+        product = self.desc.get("product_string", "")
+        if "[2.4G]" in product and "[2.4G]" not in s:
+            s += " [2.4G]"
         if self.sideload:
             s += " [sideload]"
         elif self.via_stack:
