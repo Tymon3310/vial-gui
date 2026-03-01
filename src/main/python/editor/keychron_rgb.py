@@ -73,17 +73,17 @@ class ColorButton(QPushButton):
     def _update_style(self):
         """Update button background to show current color."""
         # Convert HSV (0-255) to QColor HSV (0-359, 0-255, 0-255)
-        color = QColor.fromHsv(int(self.h * 359 / 255), self.s, self.v)
+        color = QColor.fromHsv(round(self.h * 359 / 255), self.s, self.v)
         self.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
 
     def _on_clicked(self):
         """Open color dialog."""
-        current = QColor.fromHsv(int(self.h * 359 / 255), self.s, self.v)
+        current = QColor.fromHsv(round(self.h * 359 / 255), self.s, self.v)
         color = QColorDialog.getColor(current, self, tr("KeychronRGB", "Select Color"))
         if color.isValid():
             # Convert back to 0-255 range
             h, s, v, _ = color.getHsv()
-            self.h = int(h * 255 / 359) if h >= 0 else 0
+            self.h = round(h * 255 / 359) if h >= 0 else 0
             self.s = s
             self.v = v
             self._update_style()
@@ -620,6 +620,9 @@ class KeychronRGBEditor(BasicEditor):
             self.rgb_mode.blockSignals(False)
             self.rgb_brightness.blockSignals(False)
             self.rgb_speed.blockSignals(False)
+            # Manually update labels since blockSignals prevented the lambda slots
+            self.rgb_brightness_label.setText(str(self.rgb_brightness.value()))
+            self.rgb_speed_label.setText(str(self.rgb_speed.value()))
 
     def _ensure_rgb_defaults(self):
         """Ensure RGB-related attributes have valid default values."""
@@ -804,6 +807,9 @@ class KeychronRGBEditor(BasicEditor):
         if not self.keyboard:
             return
         self.keyboard.save_keychron_rgb()
+        # Also persist VialRGB mode/speed/HSV if VialRGB is in use
+        if getattr(self.keyboard, "lighting_vialrgb", False):
+            self.keyboard.save_rgb()
 
     # === Mixed RGB Methods ===
 
@@ -1051,9 +1057,11 @@ class KeychronRGBEditor(BasicEditor):
             )
             return
 
-        # Update local data
+        # Save old values in case USB write fails
+        old_values = {}
         for led_idx in led_indices:
             if led_idx < len(self.keyboard.keychron_mixed_rgb_regions):
+                old_values[led_idx] = self.keyboard.keychron_mixed_rgb_regions[led_idx]
                 self.keyboard.keychron_mixed_rgb_regions[led_idx] = region
 
         # Send to keyboard
@@ -1064,6 +1072,9 @@ class KeychronRGBEditor(BasicEditor):
             self._update_mixed_keyboard_colors()
             self._schedule_save()
         else:
+            # Revert local data on failure
+            for led_idx, old_val in old_values.items():
+                self.keyboard.keychron_mixed_rgb_regions[led_idx] = old_val
             QMessageBox.warning(
                 self.widget(),
                 tr("KeychronRGB", "Error"),

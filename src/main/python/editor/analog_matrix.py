@@ -29,7 +29,6 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QScrollArea,
     QFrame,
-    QSlider,
     QTabWidget,
     QMessageBox,
     QDoubleSpinBox,
@@ -46,6 +45,10 @@ from protocol.keychron import (
     AKM_DKS,
     AKM_GAMEPAD,
     AKM_TOGGLE,
+    ADV_MODE_CLEAR,
+    ADV_MODE_OKMC,
+    ADV_MODE_GAME_CONTROLLER,
+    ADV_MODE_TOGGLE,
     SOCD_TYPE_NAMES,
     SOCD_PRI_NONE,
     CALIB_OFF,
@@ -304,10 +307,10 @@ class AnalogMatrixEditor(BasicEditor):
         self.key_mode.currentIndexChanged.connect(self.on_mode_changed)
         settings_layout.addWidget(self.key_mode, 0, 1)
 
-        # Actuation point (0.1mm units, range 1-40 = 0.1mm to 4.0mm)
+        # Actuation point (0.1mm units, range 1-39 = 0.1mm to 3.9mm)
         settings_layout.addWidget(QLabel(tr("AnalogMatrix", "Actuation Point:")), 0, 2)
         self.actuation_point = QDoubleSpinBox()
-        self.actuation_point.setRange(0.1, 4.0)
+        self.actuation_point.setRange(0.1, 3.9)
         self.actuation_point.setSingleStep(0.1)
         self.actuation_point.setDecimals(1)
         self.actuation_point.setValue(2.0)
@@ -315,7 +318,7 @@ class AnalogMatrixEditor(BasicEditor):
         self.actuation_point.setToolTip(
             tr(
                 "AnalogMatrix",
-                "Distance the key must travel before registering a press (0.1-4.0mm)",
+                "Distance the key must travel before registering a press (0.1-3.9mm)",
             )
         )
         self.actuation_point.valueChanged.connect(self.on_actuation_changed)
@@ -324,7 +327,7 @@ class AnalogMatrixEditor(BasicEditor):
         # Rapid Trigger sensitivity
         settings_layout.addWidget(QLabel(tr("AnalogMatrix", "RT Sensitivity:")), 1, 0)
         self.rt_sensitivity = QDoubleSpinBox()
-        self.rt_sensitivity.setRange(0.1, 4.0)
+        self.rt_sensitivity.setRange(0.1, 3.9)
         self.rt_sensitivity.setSingleStep(0.1)
         self.rt_sensitivity.setDecimals(1)
         self.rt_sensitivity.setValue(0.3)
@@ -341,7 +344,7 @@ class AnalogMatrixEditor(BasicEditor):
         # Rapid Trigger release sensitivity
         settings_layout.addWidget(QLabel(tr("AnalogMatrix", "RT Release:")), 1, 2)
         self.rt_release_sensitivity = QDoubleSpinBox()
-        self.rt_release_sensitivity.setRange(0.1, 4.0)
+        self.rt_release_sensitivity.setRange(0.1, 3.9)
         self.rt_release_sensitivity.setSingleStep(0.1)
         self.rt_release_sensitivity.setDecimals(1)
         self.rt_release_sensitivity.setValue(0.3)
@@ -734,18 +737,32 @@ class AnalogMatrixEditor(BasicEditor):
         curve_group = QGroupBox(tr("AnalogMatrix", "Response Curve"))
         curve_layout = QGridLayout()
 
-        self.curve_sliders = []
-        for i in range(4):
-            curve_layout.addWidget(
-                QLabel(tr("AnalogMatrix", "Point {}:").format(i + 1)), i, 0
-            )
-            slider = QSlider(Qt.Horizontal)
-            slider.setRange(0, 255)
-            slider.valueChanged.connect(self.on_curve_changed)
-            curve_layout.addWidget(slider, i, 1)
-            value_label = QLabel("0")
-            curve_layout.addWidget(value_label, i, 2)
-            self.curve_sliders.append((slider, value_label))
+        self.curve_points = []
+        point_labels = [
+            ("Point 1 (Start)", 0, 0),
+            ("Point 2", 10, 31),
+            ("Point 3", 30, 95),
+            ("Point 4 (End)", 40, 127),
+        ]
+        for i, (label_text, def_x, def_y) in enumerate(point_labels):
+            curve_layout.addWidget(QLabel(tr("AnalogMatrix", label_text)), i, 0)
+            x_spin = QSpinBox()
+            x_spin.setRange(0, 40)
+            x_spin.setValue(def_x)
+            x_spin.setSuffix(" travel")
+            x_spin.valueChanged.connect(self.on_curve_changed)
+            curve_layout.addWidget(QLabel("X:"), i, 1)
+            curve_layout.addWidget(x_spin, i, 2)
+
+            y_spin = QSpinBox()
+            y_spin.setRange(0, 127)
+            y_spin.setValue(def_y)
+            y_spin.setSuffix(" output")
+            y_spin.valueChanged.connect(self.on_curve_changed)
+            curve_layout.addWidget(QLabel("Y:"), i, 3)
+            curve_layout.addWidget(y_spin, i, 4)
+
+            self.curve_points.append((x_spin, y_spin))
 
         self.btn_apply_curve = QPushButton(tr("AnalogMatrix", "Apply Curve"))
         self.btn_apply_curve.clicked.connect(self.apply_curve)
@@ -770,7 +787,21 @@ class AnalogMatrixEditor(BasicEditor):
             settings = self.actuation_keyboard.get_key_setting(row, col)
             if settings:
                 self._updating = True
-                idx = self.key_mode.findData(settings.get("mode", AKM_REGULAR))
+                # Synthesize effective UI mode from base mode + adv_mode
+                # Firmware stores mode (2-bit: 0=global, 1=regular, 2=rapid)
+                # and adv_mode (0=clear, 1=DKS, 2=gamepad, 3=toggle) separately,
+                # but the UI combo uses synthetic AKM_* values
+                base_mode = settings.get("mode", AKM_REGULAR)
+                adv_mode = settings.get("adv_mode", ADV_MODE_CLEAR)
+                if adv_mode == ADV_MODE_OKMC:
+                    effective_mode = AKM_DKS
+                elif adv_mode == ADV_MODE_GAME_CONTROLLER:
+                    effective_mode = AKM_GAMEPAD
+                elif adv_mode == ADV_MODE_TOGGLE:
+                    effective_mode = AKM_TOGGLE
+                else:
+                    effective_mode = base_mode
+                idx = self.key_mode.findData(effective_mode)
                 if idx >= 0:
                     self.key_mode.setCurrentIndex(idx)
                 self.actuation_point.setValue(
@@ -786,6 +817,11 @@ class AnalogMatrixEditor(BasicEditor):
                 if axis_idx >= 0:
                     self.gamepad_axis.setCurrentIndex(axis_idx)
                 self._updating = False
+                # Manually update gamepad row visibility since on_mode_changed was suppressed
+                show_gamepad = self.key_mode.currentData() == AKM_GAMEPAD
+                for widget in self._gamepad_row_widgets:
+                    if widget is not None:
+                        widget.setVisible(show_gamepad)
 
     def _on_perkey_key_deselected(self):
         """Handle key deselection in per-key tab."""
@@ -887,9 +923,9 @@ class AnalogMatrixEditor(BasicEditor):
             )
             return
 
-        act_pt = int(self.actuation_point.value() * 10)
-        sens = int(self.rt_sensitivity.value() * 10)
-        rls_sens = int(self.rt_release_sensitivity.value() * 10)
+        act_pt = int(round(self.actuation_point.value() * 10))
+        sens = int(round(self.rt_sensitivity.value() * 10))
+        rls_sens = int(round(self.rt_release_sensitivity.value() * 10))
 
         # Build per-row 24-bit column bitmasks for selected keys.
         # Firmware expects row_mask[MATRIX_ROWS], each a 24-bit LE value
@@ -977,6 +1013,7 @@ class AnalogMatrixEditor(BasicEditor):
     def _rebuild_socd_tab(self):
         """Populate SOCD tab with current SOCD pairs from the keyboard."""
         # Clear existing widgets
+        self.socd_widgets = []
         while self.socd_container_layout.count():
             item = self.socd_container_layout.takeAt(0)
             if item.widget():
@@ -1012,19 +1049,19 @@ class AnalogMatrixEditor(BasicEditor):
             # Key 1
             layout.addWidget(QLabel(tr("AnalogMatrix", "Key 1 (Row, Col):")), 0, 0)
             row1_spin = QSpinBox()
-            row1_spin.setRange(0, 20)
+            row1_spin.setRange(0, 7)  # 3-bit field in socd_config_t
             layout.addWidget(row1_spin, 0, 1)
             col1_spin = QSpinBox()
-            col1_spin.setRange(0, 24)
+            col1_spin.setRange(0, 31)  # 5-bit field in socd_config_t
             layout.addWidget(col1_spin, 0, 2)
 
             # Key 2
             layout.addWidget(QLabel(tr("AnalogMatrix", "Key 2 (Row, Col):")), 0, 3)
             row2_spin = QSpinBox()
-            row2_spin.setRange(0, 20)
+            row2_spin.setRange(0, 7)  # 3-bit field in socd_config_t
             layout.addWidget(row2_spin, 0, 4)
             col2_spin = QSpinBox()
-            col2_spin.setRange(0, 24)
+            col2_spin.setRange(0, 31)  # 5-bit field in socd_config_t
             layout.addWidget(col2_spin, 0, 5)
 
             # SOCD Type
@@ -1337,6 +1374,12 @@ class AnalogMatrixEditor(BasicEditor):
         self.keyboard = device.keyboard
         self._updating = True
 
+        # Stop any running realtime monitoring timer from previous device
+        if self.realtime_timer:
+            self.realtime_timer.stop()
+            self.realtime_timer = None
+            self.btn_start_realtime.setText(tr("AnalogMatrix", "Start Monitoring"))
+
         # Update profile info
         self.profile_count_label.setText(
             str(self.keyboard.keychron_analog_profile_count)
@@ -1364,15 +1407,23 @@ class AnalogMatrixEditor(BasicEditor):
         if idx >= 0:
             self.gc_mode.setCurrentIndex(idx)
 
-        # Update curve sliders
-        for i, (slider, label) in enumerate(self.curve_sliders):
+        # Update curve points
+        for i, (x_spin, y_spin) in enumerate(self.curve_points):
             if i < len(self.keyboard.keychron_analog_curve):
-                value = self.keyboard.keychron_analog_curve[i]
-                slider.setValue(value)
-                label.setText(str(value))
+                x, y = self.keyboard.keychron_analog_curve[i]
+                x_spin.setValue(x)
+                y_spin.setValue(y)
 
         # Setup per-key actuation keyboard
         self._setup_actuation_keyboard()
+
+        # Update calibration/realtime spinbox ranges to match actual matrix
+        rows = getattr(self.keyboard, "rows", 6)
+        cols = getattr(self.keyboard, "cols", 20)
+        self.realtime_row.setRange(0, max(0, rows - 1))
+        self.realtime_col.setRange(0, max(0, cols - 1))
+        self.calval_row.setRange(0, max(0, rows - 1))
+        self.calval_col.setRange(0, max(0, cols - 1))
 
         # Populate Global Defaults group from firmware global config slot
         self._reload_global_defaults()
@@ -1398,6 +1449,10 @@ class AnalogMatrixEditor(BasicEditor):
 
         self._updating = False
 
+        # Load initial DKS slot 0 data (must be after _updating=False)
+        if self.dks_slot_selector.count() > 0:
+            self._on_dks_slot_changed()
+
     def on_profile_changed(self):
         """Handle profile selection change."""
         if self._updating or not self.keyboard:
@@ -1414,11 +1469,15 @@ class AnalogMatrixEditor(BasicEditor):
             self.profile_name_edit.setText("")
         # Reload global defaults for this profile
         self._reload_global_defaults()
+        # Reload per-key actuation data for this profile
+        self._setup_actuation_keyboard()
         # Reload SOCD from firmware for this profile
         self._populate_socd_from_firmware()
         # Reload DKS slot 0 if available
         if self.dks_slot_selector.count() > 0:
+            self.dks_slot_selector.blockSignals(True)
             self.dks_slot_selector.setCurrentIndex(0)
+            self.dks_slot_selector.blockSignals(False)
             self._on_dks_slot_changed()
 
     def _populate_socd_from_firmware(self):
@@ -1485,6 +1544,12 @@ class AnalogMatrixEditor(BasicEditor):
                 == QMessageBox.Yes
             ):
                 self.keyboard.reset_keychron_analog_profile(profile)
+                # Refresh UI with the reset profile's data
+                self._reload_global_defaults()
+                self._setup_actuation_keyboard()
+                self._populate_socd_from_firmware()
+                if self.dks_slot_selector.count() > 0:
+                    self._on_dks_slot_changed()
 
     def on_mode_changed(self):
         """Handle key mode change — show/hide Gamepad axis row."""
@@ -1510,9 +1575,24 @@ class AnalogMatrixEditor(BasicEditor):
 
         profile = self.profile_selector.currentData()
         mode = self.key_mode.currentData()
-        act_pt = int(self.actuation_point.value() * 10)  # Convert to 0.1mm units
-        sens = int(self.rt_sensitivity.value() * 10)
-        rls_sens = int(self.rt_release_sensitivity.value() * 10)
+
+        # Firmware rejects modes > AKM_RAPID for global config
+        # (profile.c: if mode > AKM_RAPID ... return false)
+        if mode > AKM_RAPID:
+            QMessageBox.warning(
+                self.tabs,
+                tr("AnalogMatrix", "Invalid Mode"),
+                tr(
+                    "AnalogMatrix",
+                    "Only Regular and Rapid Trigger modes can be applied globally.\n"
+                    "DKS, Gamepad, Toggle must be set per-key.",
+                ),
+            )
+            return
+
+        act_pt = int(round(self.actuation_point.value() * 10))  # Convert to 0.1mm units
+        sens = int(round(self.rt_sensitivity.value() * 10))
+        rls_sens = int(round(self.rt_release_sensitivity.value() * 10))
 
         if self.keyboard.set_keychron_analog_travel(
             profile, mode, act_pt, sens, rls_sens, entire=True
@@ -1603,18 +1683,18 @@ class AnalogMatrixEditor(BasicEditor):
             self.keyboard.set_keychron_analog_game_controller_mode(mode)
 
     def on_curve_changed(self):
-        """Handle curve slider change."""
+        """Handle curve point change."""
         if self._updating:
             return
-        for slider, label in self.curve_sliders:
-            label.setText(str(slider.value()))
 
     def apply_curve(self):
         """Apply joystick response curve."""
         if not self.keyboard:
             return
 
-        curve = [slider.value() for slider, _ in self.curve_sliders]
+        curve = [
+            (x_spin.value(), y_spin.value()) for x_spin, y_spin in self.curve_points
+        ]
         if self.keyboard.set_keychron_analog_curve(curve):
             QMessageBox.information(
                 self.tabs,

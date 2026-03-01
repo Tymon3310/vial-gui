@@ -538,6 +538,10 @@ class ProtocolKeychron(BaseProtocol):
 
     def has_keychron_analog(self):
         """Check if Analog Matrix (Hall Effect) is supported."""
+        import os
+
+        if os.environ.get("DEBUG_FORCE_HE", "").lower() in ("1", "true", "yes"):
+            return True
         return bool(getattr(self, "keychron_features", 0) & FEATURE_ANALOG_MATRIX)
 
     def has_keychron_dfu(self):
@@ -590,7 +594,8 @@ class ProtocolKeychron(BaseProtocol):
             retries=3,
         )
         if (
-            data[0] == KC_MISC_CMD_GROUP
+            data is not None
+            and data[0] == KC_MISC_CMD_GROUP
             and data[1] == DEBOUNCE_SET
             and data[2] == KC_SUCCESS
         ):
@@ -623,7 +628,8 @@ class ProtocolKeychron(BaseProtocol):
             retries=3,
         )
         if (
-            data[0] == KC_MISC_CMD_GROUP
+            data is not None
+            and data[0] == KC_MISC_CMD_GROUP
             and data[1] == NKRO_SET
             and data[2] == KC_SUCCESS
         ):
@@ -653,7 +659,8 @@ class ProtocolKeychron(BaseProtocol):
             retries=3,
         )
         if (
-            data[0] == KC_MISC_CMD_GROUP
+            data is not None
+            and data[0] == KC_MISC_CMD_GROUP
             and data[1] == REPORT_RATE_SET
             and data[2] == KC_SUCCESS
         ):
@@ -677,7 +684,8 @@ class ProtocolKeychron(BaseProtocol):
             data[:8].hex() if data else "None",
         )
         if (
-            data[0] == KC_MISC_CMD_GROUP
+            data is not None
+            and data[0] == KC_MISC_CMD_GROUP
             and data[1] == SNAP_CLICK_GET_INFO
             and data[2] == KC_SUCCESS
         ):
@@ -704,7 +712,8 @@ class ProtocolKeychron(BaseProtocol):
                     data[:32].hex() if data else "None",
                 )
                 if (
-                    data[0] == KC_MISC_CMD_GROUP
+                    data is not None
+                    and data[0] == KC_MISC_CMD_GROUP
                     and data[1] == SNAP_CLICK_GET
                     and data[2] == KC_SUCCESS
                 ):
@@ -728,6 +737,9 @@ class ProtocolKeychron(BaseProtocol):
 
     def set_keychron_snap_click(self, index, snap_type, key1, key2):
         """Set a single Snap Click entry."""
+        # snap_click_config_t uses uint8_t key[2], clamp to 8 bits
+        key1 = key1 & 0xFF
+        key2 = key2 & 0xFF
         data = self.usb_send(
             self.dev,
             struct.pack(
@@ -743,7 +755,8 @@ class ProtocolKeychron(BaseProtocol):
             retries=3,
         )
         if (
-            data[0] == KC_MISC_CMD_GROUP
+            data is not None
+            and data[0] == KC_MISC_CMD_GROUP
             and data[1] == SNAP_CLICK_SET
             and data[2] == KC_SUCCESS
         ):
@@ -762,7 +775,8 @@ class ProtocolKeychron(BaseProtocol):
             self.dev, struct.pack("BB", KC_MISC_CMD_GROUP, SNAP_CLICK_SAVE), retries=3
         )
         return (
-            data[0] == KC_MISC_CMD_GROUP
+            data is not None
+            and data[0] == KC_MISC_CMD_GROUP
             and data[1] == SNAP_CLICK_SAVE
             and data[2] == KC_SUCCESS
         )
@@ -1083,7 +1097,8 @@ class ProtocolKeychron(BaseProtocol):
             retries=3,
         )
         if (
-            data[0] == KC_MISC_CMD_GROUP
+            data is not None
+            and data[0] == KC_MISC_CMD_GROUP
             and data[1] == WIRELESS_LPM_SET
             and data[2] == KC_SUCCESS
         ):
@@ -1552,16 +1567,14 @@ class ProtocolKeychron(BaseProtocol):
         data = self.usb_send(
             self.dev, struct.pack("BB", KC_ANALOG_MATRIX, AMC_GET_CURVE), retries=3
         )
-        if (
-            data[0] == KC_ANALOG_MATRIX
-            and data[1] == AMC_GET_CURVE
-            and data[2] == KC_SUCCESS
-        ):
+        if data[0] == KC_ANALOG_MATRIX and data[1] == AMC_GET_CURVE:
+            # Firmware writes point_t[4] directly at data[2] with NO status byte.
+            # Each point_t is {uint8_t x, uint8_t y} = 2 bytes.
             self.keychron_analog_curve = []
             for i in range(4):
-                self.keychron_analog_curve.append(
-                    data[3 + i * 2] | (data[4 + i * 2] << 8)
-                )
+                x = data[2 + i * 2]
+                y = data[3 + i * 2]
+                self.keychron_analog_curve.append((x, y))
 
         # Get game controller mode
         data = self.usb_send(
@@ -1704,10 +1717,10 @@ class ProtocolKeychron(BaseProtocol):
         )
 
     def set_keychron_analog_curve(self, curve_points):
-        """Set joystick response curve (4 points)."""
+        """Set joystick response curve (4 x point_t {x, y} pairs)."""
         packet = struct.pack("BB", KC_ANALOG_MATRIX, AMC_SET_CURVE)
-        for point in curve_points[:4]:
-            packet += struct.pack("<H", point)
+        for x, y in curve_points[:4]:
+            packet += struct.pack("BB", x, y)
         data = self.usb_send(self.dev, packet, retries=3)
         if (
             data[0] == KC_ANALOG_MATRIX
@@ -1726,9 +1739,9 @@ class ProtocolKeychron(BaseProtocol):
             retries=3,
         )
         if (
-            data[0] == KC_ANALOG_MATRIX
-            and data[1] == AMC_SET_GAME_CONTROLLER_MODE
-            and data[2] == KC_SUCCESS
+            data[0] == KC_ANALOG_MATRIX and data[1] == AMC_SET_GAME_CONTROLLER_MODE
+            # Firmware does NOT write a status byte for this command;
+            # data[2] still holds the mode value we sent.
         ):
             self.keychron_analog_game_controller_mode = mode
             return True
@@ -2189,24 +2202,15 @@ class ProtocolKeychron(BaseProtocol):
         Returns:
             True on success.
         """
-        # Build okmc_traval_config_t (3 bytes, packed bitfields):
-        # byte0: shallow_act:6 [5:0] | shallow_deact[1:0] [7:6]
-        # byte1: shallow_deact[3:2] [3:0] | deep_act[3:0] [7:4]  (wait — see actual layout)
-        # Actual layout (from struct definition):
-        # shallow_act:6 @ bits[5:0]   of byte0
-        # shallow_deact:6 @ bits[11:6] spanning byte0[7:6] + byte1[3:0]
-        # deep_act:6    @ bits[17:12] spanning byte1[7:4] + byte2[1:0]
-        # deep_deact:6  @ bits[23:18] spanning byte2[7:2]
-        sa = shallow_act & 0x3F
-        sd = shallow_deact & 0x3F
-        da = deep_act & 0x3F
-        dd = deep_deact & 0x3F
-        travel_b0 = sa | ((sd & 0x03) << 6)
-        travel_b1 = ((sd >> 2) & 0x0F) | ((da & 0x0F) << 4)
-        travel_b2 = ((da >> 4) & 0x03) | (dd << 2)
-
+        # Firmware profile_set_adv_mode() (profile.c:246-249) reads travel as
+        # 4 individual bytes, NOT the 3-byte packed bitfield storage format:
+        #   okmc_config.travel.shallow_act   = data[5];
+        #   okmc_config.travel.shallow_deact = data[6];
+        #   okmc_config.travel.deep_act      = data[7];
+        #   okmc_config.travel.deep_deact    = data[8];
+        # Each value is masked to 6 bits by the bitfield assignment.
         packet = struct.pack(
-            "BBBBBBB",
+            "BBBBBBBBBBB",
             KC_ANALOG_MATRIX,
             AMC_SET_ADVANCE_MODE,
             profile,
@@ -2214,9 +2218,11 @@ class ProtocolKeychron(BaseProtocol):
             row,
             col,
             okmc_index,
+            shallow_act & 0x3F,
+            shallow_deact & 0x3F,
+            deep_act & 0x3F,
+            deep_deact & 0x3F,
         )
-        # Travel config (3 bytes)
-        packet += bytes([travel_b0, travel_b1, travel_b2])
         # Keycodes (4 × uint16 LE)
         for kc in (list(keycodes) + [0, 0, 0, 0])[:4]:
             packet += struct.pack("<H", kc & 0xFFFF)

@@ -192,109 +192,139 @@ class KeychronSettings(BasicEditor):
         self.keyboard = device.keyboard
         self._updating = True
 
-        # Show/hide groups based on feature support
-        self.debounce_group.setVisible(self.keyboard.has_keychron_debounce())
-        self.nkro_group.setVisible(self.keyboard.has_keychron_nkro())
-        self.report_rate_group.setVisible(self.keyboard.has_keychron_report_rate())
-        self.wireless_group.setVisible(self.keyboard.has_keychron_wireless())
-        self.factory_reset_group.setVisible(True)
+        try:
+            # Show/hide groups based on feature support
+            self.debounce_group.setVisible(self.keyboard.has_keychron_debounce())
+            self.nkro_group.setVisible(self.keyboard.has_keychron_nkro())
+            self.report_rate_group.setVisible(self.keyboard.has_keychron_report_rate())
+            self.wireless_group.setVisible(self.keyboard.has_keychron_wireless())
+            self.factory_reset_group.setVisible(True)
 
-        # Update debounce UI
-        if self.keyboard.has_keychron_debounce():
-            idx = self.debounce_type.findData(self.keyboard.keychron_debounce_type)
-            if idx >= 0:
-                self.debounce_type.setCurrentIndex(idx)
-            self.debounce_time.setValue(self.keyboard.keychron_debounce_time)
+            # Update debounce UI
+            if self.keyboard.has_keychron_debounce():
+                idx = self.debounce_type.findData(self.keyboard.keychron_debounce_type)
+                if idx >= 0:
+                    self.debounce_type.setCurrentIndex(idx)
+                self.debounce_time.setValue(self.keyboard.keychron_debounce_time)
 
-        # Update NKRO UI
-        if self.keyboard.has_keychron_nkro():
-            self.nkro_enabled.setChecked(self.keyboard.keychron_nkro_enabled)
-            if self.keyboard.keychron_nkro_adaptive:
-                # Adaptive NKRO: setting is controlled automatically by firmware
-                self.nkro_enabled.setEnabled(False)
-                self.nkro_status_label.setText(
-                    tr("KeychronSettings", "(Adaptive - controlled by firmware)")
-                )
-            elif self.keyboard.keychron_nkro_supported:
-                self.nkro_enabled.setEnabled(True)
-                self.nkro_status_label.setText(
-                    tr("KeychronSettings", "(NKRO supported)")
-                )
-            else:
-                self.nkro_enabled.setEnabled(False)
-                self.nkro_status_label.setText(
-                    tr("KeychronSettings", "(Not supported)")
-                )
-
-        # Update report rate UI
-        if self.keyboard.has_keychron_report_rate():
-            self.report_rate.clear()
-            for rate_id in range(REPORT_RATE_8000HZ, REPORT_RATE_125HZ + 1):
-                # Check if this rate is supported
-                if self.keyboard.keychron_report_rate_mask & (1 << rate_id):
-                    self.report_rate.addItem(
-                        REPORT_RATE_NAMES.get(rate_id, f"{rate_id}"), rate_id
+            # Update NKRO UI
+            if self.keyboard.has_keychron_nkro():
+                self.nkro_enabled.setChecked(self.keyboard.keychron_nkro_enabled)
+                if self.keyboard.keychron_nkro_adaptive:
+                    # Adaptive NKRO: setting is controlled automatically by firmware
+                    self.nkro_enabled.setEnabled(False)
+                    self.nkro_status_label.setText(
+                        tr("KeychronSettings", "(Adaptive - controlled by firmware)")
                     )
-            idx = self.report_rate.findData(self.keyboard.keychron_report_rate)
-            if idx >= 0:
-                self.report_rate.setCurrentIndex(idx)
+                elif self.keyboard.keychron_nkro_supported:
+                    self.nkro_enabled.setEnabled(True)
+                    self.nkro_status_label.setText(
+                        tr("KeychronSettings", "(NKRO supported)")
+                    )
+                else:
+                    self.nkro_enabled.setEnabled(False)
+                    self.nkro_status_label.setText(
+                        tr("KeychronSettings", "(Not supported)")
+                    )
 
-        # Update wireless UI
-        if self.keyboard.has_keychron_wireless():
-            self.wireless_backlit_time.setValue(
-                self.keyboard.keychron_wireless_backlit_time
-            )
-            self.wireless_idle_time.setValue(self.keyboard.keychron_wireless_idle_time)
+            # Update report rate UI
+            if self.keyboard.has_keychron_report_rate():
+                self.report_rate.clear()
+                for rate_id in range(REPORT_RATE_8000HZ, REPORT_RATE_125HZ + 1):
+                    # Check if this rate is supported
+                    if self.keyboard.keychron_report_rate_mask & (1 << rate_id):
+                        self.report_rate.addItem(
+                            REPORT_RATE_NAMES.get(rate_id, f"{rate_id}"), rate_id
+                        )
+                idx = self.report_rate.findData(self.keyboard.keychron_report_rate)
+                if idx >= 0:
+                    self.report_rate.setCurrentIndex(idx)
 
-        # Update firmware label
-        if self.keyboard.keychron_firmware_version:
-            self.firmware_label.setText(
-                tr("KeychronSettings", "Firmware: {}").format(
-                    self.keyboard.keychron_firmware_version
+            # Update wireless UI
+            if self.keyboard.has_keychron_wireless():
+                self.wireless_backlit_time.setValue(
+                    self.keyboard.keychron_wireless_backlit_time
                 )
-            )
-            self.firmware_label.setVisible(True)
-        else:
-            self.firmware_label.setVisible(False)
-
-        # Update MCU info label (from DFU_INFO_GET)
-        if self.keyboard.keychron_mcu_info:
-            self.mcu_label.setText(
-                tr("KeychronSettings", "MCU: {}").format(
-                    self.keyboard.keychron_mcu_info
+                self.wireless_idle_time.setValue(
+                    self.keyboard.keychron_wireless_idle_time
                 )
-            )
-            self.mcu_label.setVisible(True)
-        else:
-            self.mcu_label.setVisible(False)
 
-        self._updating = False
+            # Update firmware label
+            if self.keyboard.keychron_firmware_version:
+                self.firmware_label.setText(
+                    tr("KeychronSettings", "Firmware: {}").format(
+                        self.keyboard.keychron_firmware_version
+                    )
+                )
+                self.firmware_label.setVisible(True)
+            else:
+                self.firmware_label.setVisible(False)
+
+            # Update MCU info label (from DFU_INFO_GET)
+            if self.keyboard.keychron_mcu_info:
+                self.mcu_label.setText(
+                    tr("KeychronSettings", "MCU: {}").format(
+                        self.keyboard.keychron_mcu_info
+                    )
+                )
+                self.mcu_label.setVisible(True)
+            else:
+                self.mcu_label.setVisible(False)
+        finally:
+            self._updating = False
 
     def on_debounce_changed(self):
         if self._updating or not self.keyboard:
             return
         debounce_type = self.debounce_type.currentData()
+        if debounce_type is None:
+            return
         debounce_time = self.debounce_time.value()
-        self.keyboard.set_keychron_debounce(debounce_type, debounce_time)
+        ok = self.keyboard.set_keychron_debounce(debounce_type, debounce_time)
+        if not ok:
+            # Revert UI to cached firmware state
+            self._updating = True
+            idx = self.debounce_type.findData(self.keyboard.keychron_debounce_type)
+            if idx >= 0:
+                self.debounce_type.setCurrentIndex(idx)
+            self.debounce_time.setValue(self.keyboard.keychron_debounce_time)
+            self._updating = False
 
     def on_nkro_changed(self):
         if self._updating or not self.keyboard:
             return
-        self.keyboard.set_keychron_nkro(self.nkro_enabled.isChecked())
+        ok = self.keyboard.set_keychron_nkro(self.nkro_enabled.isChecked())
+        if not ok:
+            self._updating = True
+            self.nkro_enabled.setChecked(self.keyboard.keychron_nkro_enabled)
+            self._updating = False
 
     def on_report_rate_changed(self):
         if self._updating or not self.keyboard:
             return
         rate = self.report_rate.currentData()
         if rate is not None:
-            self.keyboard.set_keychron_report_rate(rate)
+            ok = self.keyboard.set_keychron_report_rate(rate)
+            if not ok:
+                self._updating = True
+                idx = self.report_rate.findData(self.keyboard.keychron_report_rate)
+                if idx >= 0:
+                    self.report_rate.setCurrentIndex(idx)
+                self._updating = False
 
     def on_wireless_changed(self):
         if self._updating or not self.keyboard:
             return
-        self.keyboard.set_keychron_wireless_lpm(
+        ok = self.keyboard.set_keychron_wireless_lpm(
             self.wireless_backlit_time.value(), self.wireless_idle_time.value()
         )
+        if not ok:
+            self._updating = True
+            self.wireless_backlit_time.setValue(
+                self.keyboard.keychron_wireless_backlit_time
+            )
+            self.wireless_idle_time.setValue(self.keyboard.keychron_wireless_idle_time)
+            self._updating = False
 
     def _show_factory_reset_instructions(self):
         """Open the factory reset dialog."""

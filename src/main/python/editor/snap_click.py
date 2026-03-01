@@ -237,6 +237,14 @@ class SnapClickEditor(BasicEditor):
             widget.deleteLater()
         self.entry_widgets.clear()
 
+        # Remove any leftover stretch/spacer items from the layout
+        while self.entries_layout.count():
+            item = self.entries_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+
         # Create new widgets
         for i, entry in enumerate(self.keyboard.keychron_snap_click_entries):
             widget = SnapClickEntry(i, self)
@@ -261,10 +269,15 @@ class SnapClickEditor(BasicEditor):
             key1 = keycode
         else:
             key2 = keycode
-        self.keyboard.set_keychron_snap_click(
+        ok = self.keyboard.set_keychron_snap_click(
             entry_index, entry.get("type", 0), key1, key2
         )
-        self._schedule_save()
+        if ok:
+            self._schedule_save()
+        else:
+            # Revert UI to cached firmware state
+            if entry_index < len(self.entry_widgets):
+                self.entry_widgets[entry_index].set_entry(entry)
 
     def update_entry_type(self, entry_index, snap_type):
         """Update the SOCD type for an entry."""
@@ -274,10 +287,15 @@ class SnapClickEditor(BasicEditor):
             return
 
         entry = self.keyboard.keychron_snap_click_entries[entry_index]
-        self.keyboard.set_keychron_snap_click(
+        ok = self.keyboard.set_keychron_snap_click(
             entry_index, snap_type, entry.get("key1", 0), entry.get("key2", 0)
         )
-        self._schedule_save()
+        if ok:
+            self._schedule_save()
+        else:
+            # Revert UI to cached firmware state
+            if entry_index < len(self.entry_widgets):
+                self.entry_widgets[entry_index].set_entry(entry)
 
     def _schedule_save(self):
         """Schedule an EEPROM save 1 s after the last change (debounced)."""
