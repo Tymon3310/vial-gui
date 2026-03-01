@@ -425,6 +425,15 @@ class MainWindow(QMainWindow):
         """Common path after device is opened (sync or async)."""
         self.setWindowTitle("Vial")
 
+        # Update combobox text now that the device is open and its real name
+        # is available (e.g. bridge devices resolve the keyboard name from
+        # the Vial definition after open()).
+        idx = self.combobox_devices.currentIndex()
+        if idx >= 0 and self.autorefresh.current_device:
+            self.combobox_devices.setItemText(
+                idx, self.autorefresh.current_device.title()
+            )
+
         if isinstance(self.autorefresh.current_device, VialKeyboard):
             keyboard_id = self.autorefresh.current_device.keyboard.keyboard_id
             if (keyboard_id in EXAMPLE_KEYBOARDS) or (
@@ -459,8 +468,12 @@ class MainWindow(QMainWindow):
             self.about_keyboard_act.setVisible(True)
 
         # if unlock process was interrupted, we must finish it first
+        # Skip for bridge devices — the wireless round-trip can return
+        # garbled data that falsely indicates unlock-in-progress, and
+        # the subsequent reload() over wireless is unreliable.
         if (
             isinstance(self.autorefresh.current_device, VialKeyboard)
+            and not isinstance(self.autorefresh.current_device, VialBridgeKeyboard)
             and self.autorefresh.current_device.keyboard.get_unlock_in_progress()
         ):
             Unlocker.unlock(self.autorefresh.current_device.keyboard)

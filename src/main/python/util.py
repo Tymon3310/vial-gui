@@ -123,12 +123,13 @@ def is_bridge_hid(desc, quiet=False):
     return True
 
 
-# Cache for bridge probe results: path -> (result, via_id)
-# Once a bridge is probed, the result is cached permanently as long as the
-# device is present in USB enumeration.  Re-probing would require opening the
-# HID interface, which conflicts with an already-open connection.
+# Cache for bridge probe results: path -> (result, via_id, timestamp)
+# Positive results are cached permanently (re-probing would conflict with
+# an active HID connection).  Negative results expire after a TTL so the
+# bridge is re-probed once a keyboard connects wirelessly.
 _bridge_probe_cache = {}
 _bridge_probe_lock = threading.Lock()
+_BRIDGE_NEGATIVE_CACHE_TTL = 5  # seconds
 
 
 def find_vial_devices(
@@ -234,17 +235,25 @@ def find_vial_devices(
                 rawhid_path = rawhid_desc["path"]
                 bridge_rawhid_paths.add(rawhid_path)
 
-                # Check probe cache — cached permanently while device present.
-                # Never re-probe: opening the HID interface would conflict with
-                # any active connection the main thread holds on the same device.
+                # Check probe cache.  Positive results are cached permanently
+                # (re-probing would conflict with an active HID connection).
+                # Negative results expire after _BRIDGE_NEGATIVE_CACHE_TTL so
+                # the bridge gets re-probed once a keyboard connects wirelessly.
                 cached = _bridge_probe_cache.get(rawhid_path)
                 if cached is not None:
-                    cached_result, cached_via_id = cached
+                    cached_result, cached_via_id, cached_time = cached
                     if cached_result:
+                        # Positive — use cached result, don't re-probe
                         bridge_dev = VialBridgeKeyboard(bridge_desc, rawhid_desc)
                         bridge_dev.via_id = cached_via_id
                         filtered.append(bridge_dev)
-                    continue
+                        continue
+                    else:
+                        # Negative — check TTL
+                        if time.monotonic() - cached_time < _BRIDGE_NEGATIVE_CACHE_TTL:
+                            continue
+                        # Expired — fall through to re-probe
+                        del _bridge_probe_cache[rawhid_path]
 
                 # Don't probe if the main thread currently has this device open.
                 # This prevents the autorefresh thread from interfering with an
@@ -269,12 +278,12 @@ def find_vial_devices(
                 # Probe the bridge -- this opens the 0xFF60 interface, runs FR
                 # handshake, and checks if a keyboard is wirelessly connected
                 if bridge_dev.probe():
-                    _bridge_probe_cache[rawhid_path] = (True, bridge_dev.via_id)
+                    _bridge_probe_cache[rawhid_path] = (True, bridge_dev.via_id, 0)
                     filtered.append(bridge_dev)
                     if not quiet:
                         logging.info("Bridge: wireless keyboard detected")
                 else:
-                    _bridge_probe_cache[rawhid_path] = (False, None)
+                    _bridge_probe_cache[rawhid_path] = (False, None, time.monotonic())
                     if not quiet:
                         logging.info("Bridge: no wireless keyboard connected")
             except Exception as e:

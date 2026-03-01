@@ -50,14 +50,35 @@ class VialKeyboard(VialDevice):
         self.keyboard.reload(override_json)
 
     def title(self):
-        s = "{} {}".format(
-            self.desc["manufacturer_string"], self.desc["product_string"]
-        ).strip()
+        # Prefer the full name from the Vial definition JSON (available after
+        # open()), e.g. "Keychron V5 Max ANSI Knob" vs the shorter USB
+        # product_string "Keychron V5 Max".
+        if self.keyboard and self.keyboard.definition:
+            name = self.keyboard.definition.get("name", "")
+            if name:
+                s = name
+            else:
+                s = self._title_from_desc()
+        else:
+            s = self._title_from_desc()
         if self.sideload:
             s += " [sideload]"
         elif self.via_stack:
             s += " [VIA]"
         return s
+
+    def _title_from_desc(self):
+        """Build a display name from USB HID descriptor strings."""
+        manufacturer = self.desc.get("manufacturer_string", "").strip()
+        product = self.desc.get("product_string", "").strip()
+        # Avoid "Keychron Keychron V5 Max" when product already contains manufacturer
+        if (
+            manufacturer
+            and product
+            and product.lower().startswith(manufacturer.lower())
+        ):
+            return product
+        return "{} {}".format(manufacturer, product).strip()
 
     def get_uid(self):
         try:
@@ -212,10 +233,7 @@ class VialBridgeKeyboard(VialKeyboard):
             if name:
                 return "{} [2.4G]".format(name)
         # Fallback to dongle descriptor (before open() completes)
-        s = "{} {}".format(
-            self._rawhid_desc.get("manufacturer_string", ""),
-            self._rawhid_desc.get("product_string", ""),
-        ).strip()
+        s = self._rawhid_desc.get("product_string", "").strip()
         if not s:
             s = "Keychron Keyboard"
         s += " [2.4G]"
