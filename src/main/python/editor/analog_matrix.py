@@ -61,9 +61,70 @@ from protocol.keychron import (
     GC_AXIS_NAMES,
     GC_AXIS_MAX,
 )
+import sys
+
 from util import tr
 from vial_device import VialKeyboard
 from widgets.actuation_keyboard_widget import ActuationKeyboardWidget
+
+
+def _show_warning(parent, title, text):
+    """Show a warning message box (non-blocking on Emscripten)."""
+    if sys.platform == "emscripten":
+        box = QMessageBox(QMessageBox.Warning, title, text, QMessageBox.Ok, parent)
+        box.setModal(True)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+        box.show()
+    else:
+        QMessageBox.warning(parent, title, text)
+
+
+def _show_info(parent, title, text):
+    """Show an info message box (non-blocking on Emscripten)."""
+    if sys.platform == "emscripten":
+        box = QMessageBox(QMessageBox.Information, title, text, QMessageBox.Ok, parent)
+        box.setModal(True)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+        box.show()
+    else:
+        QMessageBox.information(parent, title, text)
+
+
+def _ask_question(parent, title, text, on_yes):
+    """Ask a yes/no question (non-blocking on Emscripten).
+
+    On Emscripten, shows a non-blocking dialog and calls *on_yes()* when the
+    user clicks Yes.  On desktop, uses the blocking static method and calls
+    *on_yes()* immediately if the answer is Yes.
+
+    Returns the QMessageBox instance on Emscripten (caller must prevent GC)
+    or None on desktop.
+    """
+    if sys.platform == "emscripten":
+        box = QMessageBox(
+            QMessageBox.Question,
+            title,
+            text,
+            QMessageBox.Yes | QMessageBox.No,
+            parent,
+        )
+        box.setModal(True)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+
+        def _on_finished(result):
+            if box.clickedButton() == box.button(QMessageBox.Yes):
+                on_yes()
+
+        box.finished.connect(_on_finished)
+        box.show()
+        return box
+    else:
+        if (
+            QMessageBox.question(parent, title, text, QMessageBox.Yes | QMessageBox.No)
+            == QMessageBox.Yes
+        ):
+            on_yes()
+        return None
 
 
 class AnalogMatrixEditor(BasicEditor):
@@ -847,7 +908,7 @@ class AnalogMatrixEditor(BasicEditor):
 
         selected = self.actuation_keyboard.get_selected_keys()
         if not selected:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "No Keys Selected"),
                 tr("AnalogMatrix", "Please select at least one key to apply settings."),
@@ -868,7 +929,7 @@ class AnalogMatrixEditor(BasicEditor):
                 if not ok:
                     errors.append((row, col))
             if errors:
-                QMessageBox.warning(
+                _show_warning(
                     self.tabs,
                     tr("AnalogMatrix", "Error"),
                     tr(
@@ -876,7 +937,7 @@ class AnalogMatrixEditor(BasicEditor):
                     ).format(len(errors)),
                 )
             else:
-                QMessageBox.information(
+                _show_info(
                     self.tabs,
                     tr("AnalogMatrix", "Applied"),
                     tr("AnalogMatrix", "Gamepad axis {} assigned to {} key(s).").format(
@@ -894,7 +955,7 @@ class AnalogMatrixEditor(BasicEditor):
                 if not ok:
                     errors.append((row, col))
             if errors:
-                QMessageBox.warning(
+                _show_warning(
                     self.tabs,
                     tr("AnalogMatrix", "Error"),
                     tr(
@@ -902,7 +963,7 @@ class AnalogMatrixEditor(BasicEditor):
                     ).format(len(errors)),
                 )
             else:
-                QMessageBox.information(
+                _show_info(
                     self.tabs,
                     tr("AnalogMatrix", "Applied"),
                     tr("AnalogMatrix", "Toggle mode applied to {} key(s).").format(
@@ -912,7 +973,7 @@ class AnalogMatrixEditor(BasicEditor):
             return
 
         if mode == AKM_DKS:
-            QMessageBox.information(
+            _show_info(
                 self.tabs,
                 tr("AnalogMatrix", "Use DKS Tab"),
                 tr(
@@ -949,7 +1010,7 @@ class AnalogMatrixEditor(BasicEditor):
                 self.actuation_keyboard.set_key_setting(
                     row, col, mode, act_pt, sens, rls_sens
                 )
-            QMessageBox.information(
+            _show_info(
                 self.tabs,
                 tr("AnalogMatrix", "Applied"),
                 tr("AnalogMatrix", "Settings applied to {} keys.").format(
@@ -957,7 +1018,7 @@ class AnalogMatrixEditor(BasicEditor):
                 ),
             )
         else:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to apply settings."),
@@ -1112,13 +1173,13 @@ class AnalogMatrixEditor(BasicEditor):
         )
 
         if success:
-            QMessageBox.information(
+            _show_info(
                 self.tabs,
                 tr("AnalogMatrix", "Applied"),
                 tr("AnalogMatrix", "SOCD pair {} configured.").format(index + 1),
             )
         else:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to apply SOCD configuration."),
@@ -1181,7 +1242,7 @@ class AnalogMatrixEditor(BasicEditor):
             profile, mode, act_pt, sens, rls_sens, entire=True
         )
         if success:
-            QMessageBox.information(
+            _show_info(
                 self.tabs,
                 tr("AnalogMatrix", "Applied"),
                 tr("AnalogMatrix", "Global defaults updated for Profile {}.").format(
@@ -1189,7 +1250,7 @@ class AnalogMatrixEditor(BasicEditor):
                 ),
             )
         else:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to set global defaults."),
@@ -1213,13 +1274,13 @@ class AnalogMatrixEditor(BasicEditor):
             return
         name = self.profile_name_edit.text().strip()
         if self.keyboard.set_keychron_analog_profile_name(profile, name):
-            QMessageBox.information(
+            _show_info(
                 self.tabs,
                 tr("AnalogMatrix", "Name Set"),
                 tr("AnalogMatrix", "Profile {} name updated.").format(profile + 1),
             )
         else:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to set profile name."),
@@ -1299,7 +1360,7 @@ class AnalogMatrixEditor(BasicEditor):
         # Get selected keys from Actuation tab widget
         selected = self.actuation_keyboard.get_selected_keys()
         if not selected:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "No Keys Selected"),
                 tr("AnalogMatrix", "Select keys in the Actuation tab first."),
@@ -1324,7 +1385,7 @@ class AnalogMatrixEditor(BasicEditor):
                 errors.append((row, col))
 
         if errors:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to apply DKS to {} key(s).").format(
@@ -1332,7 +1393,7 @@ class AnalogMatrixEditor(BasicEditor):
                 ),
             )
         else:
-            QMessageBox.information(
+            _show_info(
                 self.tabs,
                 tr("AnalogMatrix", "Applied"),
                 tr("AnalogMatrix", "DKS slot {} applied to {} key(s).").format(
@@ -1514,13 +1575,13 @@ class AnalogMatrixEditor(BasicEditor):
         profile = self.profile_selector.currentData()
         if profile is not None:
             if self.keyboard.save_keychron_analog_profile(profile):
-                QMessageBox.information(
+                _show_info(
                     self.tabs,
                     tr("AnalogMatrix", "Saved"),
                     tr("AnalogMatrix", "Profile {} saved.").format(profile + 1),
                 )
             else:
-                QMessageBox.warning(
+                _show_warning(
                     self.tabs,
                     tr("AnalogMatrix", "Error"),
                     tr("AnalogMatrix", "Failed to save profile."),
@@ -1532,17 +1593,8 @@ class AnalogMatrixEditor(BasicEditor):
             return
         profile = self.profile_selector.currentData()
         if profile is not None:
-            if (
-                QMessageBox.question(
-                    self.tabs,
-                    tr("AnalogMatrix", "Reset Profile"),
-                    tr("AnalogMatrix", "Reset Profile {} to defaults?").format(
-                        profile + 1
-                    ),
-                    QMessageBox.Yes | QMessageBox.No,
-                )
-                == QMessageBox.Yes
-            ):
+
+            def _do_reset():
                 self.keyboard.reset_keychron_analog_profile(profile)
                 # Refresh UI with the reset profile's data
                 self._reload_global_defaults()
@@ -1550,6 +1602,13 @@ class AnalogMatrixEditor(BasicEditor):
                 self._populate_socd_from_firmware()
                 if self.dks_slot_selector.count() > 0:
                     self._on_dks_slot_changed()
+
+            self._reset_question_box = _ask_question(
+                self.tabs,
+                tr("AnalogMatrix", "Reset Profile"),
+                tr("AnalogMatrix", "Reset Profile {} to defaults?").format(profile + 1),
+                _do_reset,
+            )
 
     def on_mode_changed(self):
         """Handle key mode change — show/hide Gamepad axis row."""
@@ -1579,7 +1638,7 @@ class AnalogMatrixEditor(BasicEditor):
         # Firmware rejects modes > AKM_RAPID for global config
         # (profile.c: if mode > AKM_RAPID ... return false)
         if mode > AKM_RAPID:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "Invalid Mode"),
                 tr(
@@ -1597,13 +1656,13 @@ class AnalogMatrixEditor(BasicEditor):
         if self.keyboard.set_keychron_analog_travel(
             profile, mode, act_pt, sens, rls_sens, entire=True
         ):
-            QMessageBox.information(
+            _show_info(
                 self.tabs,
                 tr("AnalogMatrix", "Applied"),
                 tr("AnalogMatrix", "Settings applied to all keys."),
             )
         else:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to apply settings."),
@@ -1631,7 +1690,7 @@ class AnalogMatrixEditor(BasicEditor):
                 )
             )
         else:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to start calibration."),
@@ -1696,13 +1755,13 @@ class AnalogMatrixEditor(BasicEditor):
             (x_spin.value(), y_spin.value()) for x_spin, y_spin in self.curve_points
         ]
         if self.keyboard.set_keychron_analog_curve(curve):
-            QMessageBox.information(
+            _show_info(
                 self.tabs,
                 tr("AnalogMatrix", "Applied"),
                 tr("AnalogMatrix", "Curve settings applied."),
             )
         else:
-            QMessageBox.warning(
+            _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to apply curve settings."),

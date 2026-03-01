@@ -33,6 +33,7 @@ from PyQt5.QtWidgets import (
 )
 
 import logging
+import sys
 
 from editor.basic_editor import BasicEditor
 from editor.rgb_configurator import VIALRGB_EFFECTS
@@ -40,6 +41,18 @@ from protocol.keychron import PER_KEY_RGB_TYPE_NAMES, PER_KEY_RGB_SOLID
 from util import tr
 from vial_device import VialKeyboard
 from widgets.rgb_keyboard_widget import RGBKeyboardWidget
+
+
+def _show_warning(parent, title, text):
+    """Show a warning message box (non-blocking on Emscripten)."""
+    if sys.platform == "emscripten":
+        box = QMessageBox(QMessageBox.Warning, title, text, QMessageBox.Ok, parent)
+        box.setModal(True)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+        box.show()
+    else:
+        QMessageBox.warning(parent, title, text)
+
 
 # Keychron custom RGB Matrix effects - VialRGB IDs from vialrgb_effects.inc
 # VIALRGB_EFFECT_PER_KEY_RGB = 48, VIALRGB_EFFECT_MIXED_RGB = 49
@@ -1058,7 +1071,7 @@ class KeychronRGBEditor(BasicEditor):
 
         led_indices = self.mixed_rgb_keyboard.get_selected_led_indices()
         if not led_indices:
-            QMessageBox.warning(
+            _show_warning(
                 self.widget(),
                 tr("KeychronRGB", "No Selection"),
                 tr("KeychronRGB", "Please select keys to assign to a region."),
@@ -1083,7 +1096,7 @@ class KeychronRGBEditor(BasicEditor):
             # Revert local data on failure
             for led_idx, old_val in old_values.items():
                 self.keyboard.keychron_mixed_rgb_regions[led_idx] = old_val
-            QMessageBox.warning(
+            _show_warning(
                 self.widget(),
                 tr("KeychronRGB", "Error"),
                 tr("KeychronRGB", "Failed to update region assignments."),
