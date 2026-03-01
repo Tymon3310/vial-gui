@@ -1711,6 +1711,16 @@ class ProtocolKeychron(BaseProtocol):
             row_mask: List of per-row 24-bit column bitmasks (one int per row).
                       Firmware reads 3 bytes per row via memcpy.
         """
+        logging.info(
+            "set_keychron_analog_travel: profile=%s mode=%s act_pt=%s sens=%s rls_sens=%s entire=%s row_mask=%s",
+            profile,
+            mode,
+            act_pt,
+            sens,
+            rls_sens,
+            entire,
+            row_mask[:6] if row_mask else None,
+        )
         if entire:
             # Apply globally
             data = self.usb_send(
@@ -1748,6 +1758,10 @@ class ProtocolKeychron(BaseProtocol):
                 for mask in row_mask:
                     packet += struct.pack("<I", mask & 0xFFFFFF)[:3]
             data = self.usb_send(self.dev, packet, retries=3)
+        logging.info(
+            "set_keychron_analog_travel: response=%s",
+            data[:6].hex() if data else None,
+        )
         return (
             data[0] == KC_ANALOG_MATRIX
             and data[1] == AMC_SET_TRAVEL

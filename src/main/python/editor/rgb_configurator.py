@@ -235,6 +235,7 @@ class QmkRgblightHandler(BasicHandler):
 
     def on_underglow_color(self):
         self.dlg_color = QColorDialog()
+        self.dlg_color.setOption(QColorDialog.DontUseNativeDialog)
         self.dlg_color.setModal(True)
         self.dlg_color.finished.connect(self.on_underglow_color_finished)
         self.dlg_color.setCurrentColor(self.current_color())
@@ -380,6 +381,7 @@ class VialRGBHandler(BasicHandler):
 
     def on_rgb_color(self):
         self.dlg_color = QColorDialog()
+        self.dlg_color.setOption(QColorDialog.DontUseNativeDialog)
         self.dlg_color.setModal(True)
         self.dlg_color.finished.connect(self.on_rgb_color_finished)
         self.dlg_color.setCurrentColor(self.current_color())
@@ -498,8 +500,6 @@ class RGBConfigurator(BasicEditor):
             h.unblock_signals()
 
     def update_from_keyboard(self):
-        self.device.keyboard.reload_rgb()
-
         self.block_signals()
 
         for h in self.handlers:
@@ -516,4 +516,5 @@ class RGBConfigurator(BasicEditor):
         if not self.valid():
             return
 
+        self.device.keyboard.reload_rgb()
         self.update_from_keyboard()

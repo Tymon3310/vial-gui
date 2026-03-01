@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
+import logging
+import traceback
 import struct
 import json
 import lzma
@@ -394,6 +396,9 @@ class Keyboard(
                     break
 
     def reload_rgb(self):
+        logging.info(
+            "reload_rgb called from:\n%s", "".join(traceback.format_stack()[-5:-1])
+        )
         if self.lighting_qmk_rgblight:
             self.underglow_brightness = self.usb_send(
                 self.dev,
@@ -443,6 +448,13 @@ class Keyboard(
             self.rgb_mode = int.from_bytes(data[0:2], byteorder="little")
             self.rgb_speed = data[2]
             self.rgb_hsv = (data[3], data[4], data[5])
+            logging.info(
+                "reload_rgb: mode=%s speed=%s hsv=%s (raw data=%s)",
+                self.rgb_mode,
+                self.rgb_speed,
+                self.rgb_hsv,
+                data[:6].hex(),
+            )
 
     def reload_settings(self):
         self.settings = dict()
@@ -808,18 +820,30 @@ class Keyboard(
         s = max(0, min(255, int(hsv[1]) if hsv[1] is not None else 255))
         v = max(0, min(255, int(hsv[2]) if hsv[2] is not None else 255))
 
+        logging.info(
+            "_vialrgb_set_mode: mode=%s speed=%s h=%s s=%s v=%s (raw rgb_hsv=%s)",
+            mode,
+            speed,
+            h,
+            s,
+            v,
+            hsv,
+        )
+        packed = struct.pack(
+            "BBHBBBB",
+            CMD_VIA_LIGHTING_SET_VALUE,
+            VIALRGB_SET_MODE,
+            mode,
+            speed,
+            h,
+            s,
+            v,
+        )
+        logging.info("_vialrgb_set_mode: packet=%s", packed.hex())
+
         self.usb_send(
             self.dev,
-            struct.pack(
-                "BBHBBBB",
-                CMD_VIA_LIGHTING_SET_VALUE,
-                VIALRGB_SET_MODE,
-                mode,
-                speed,
-                h,
-                s,
-                v,
-            ),
+            packed,
         )
 
     def set_vialrgb_brightness(self, value):

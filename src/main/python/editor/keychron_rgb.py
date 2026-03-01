@@ -93,6 +93,7 @@ class ColorButton(QPushButton):
         """Open color dialog (non-blocking for Emscripten compatibility)."""
         current = QColor.fromHsv(round(self.h * 359 / 255), self.s, self.v)
         self._dlg_color = QColorDialog()
+        self._dlg_color.setOption(QColorDialog.DontUseNativeDialog)
         self._dlg_color.setModal(True)
         self._dlg_color.setCurrentColor(current)
         self._dlg_color.finished.connect(self._on_color_finished)

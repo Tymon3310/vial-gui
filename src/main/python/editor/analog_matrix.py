@@ -1237,10 +1237,19 @@ class AnalogMatrixEditor(BasicEditor):
         act_pt = int(round(self.global_actuation_point.value() * 10))
         sens = int(round(self.global_rt_sensitivity.value() * 10))
         rls_sens = int(round(self.global_rt_release.value() * 10))
+        logging.info(
+            "AnalogMatrix: _apply_global_defaults: profile=%s mode=%s act_pt=%s sens=%s rls_sens=%s",
+            profile,
+            mode,
+            act_pt,
+            sens,
+            rls_sens,
+        )
         # entire=True writes the global slot (not per-key); firmware rejects AKM_GLOBAL here
         success = self.keyboard.set_keychron_analog_travel(
             profile, mode, act_pt, sens, rls_sens, entire=True
         )
+        logging.info("AnalogMatrix: _apply_global_defaults: success=%s", success)
         if success:
             _show_info(
                 self.tabs,
