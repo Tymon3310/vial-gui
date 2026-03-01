@@ -29,6 +29,7 @@ from PyQt5.QtWidgets import (
     QSlider,
     QColorDialog,
     QTabWidget,
+    QMessageBox,
 )
 
 import logging
@@ -36,7 +37,7 @@ import logging
 from editor.basic_editor import BasicEditor
 from editor.rgb_configurator import VIALRGB_EFFECTS
 from protocol.keychron import PER_KEY_RGB_TYPE_NAMES, PER_KEY_RGB_SOLID
-from util import tr, show_warning
+from util import tr
 from vial_device import VialKeyboard
 from widgets.rgb_keyboard_widget import RGBKeyboardWidget
 
@@ -1057,7 +1058,7 @@ class KeychronRGBEditor(BasicEditor):
 
         led_indices = self.mixed_rgb_keyboard.get_selected_led_indices()
         if not led_indices:
-            show_warning(
+            QMessageBox.warning(
                 self.widget(),
                 tr("KeychronRGB", "No Selection"),
                 tr("KeychronRGB", "Please select keys to assign to a region."),
@@ -1082,7 +1083,7 @@ class KeychronRGBEditor(BasicEditor):
             # Revert local data on failure
             for led_idx, old_val in old_values.items():
                 self.keyboard.keychron_mixed_rgb_regions[led_idx] = old_val
-            show_warning(
+            QMessageBox.warning(
                 self.widget(),
                 tr("KeychronRGB", "Error"),
                 tr("KeychronRGB", "Failed to update region assignments."),

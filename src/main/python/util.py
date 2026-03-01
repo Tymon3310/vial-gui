@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 
 from PyQt5.QtCore import QCoreApplication, QStandardPaths
 from PyQt5.QtGui import QPalette
-from PyQt5.QtWidgets import QApplication, QWidget, QScrollArea, QFrame, QMessageBox
+from PyQt5.QtWidgets import QApplication, QWidget, QScrollArea, QFrame
 
 from hidproxy import hid
 from keycodes.keycodes import Keycode
@@ -413,79 +413,3 @@ class KeycodeDisplay:
                 label = widget.keycode.label
                 widget.setStyleSheet("QPushButton {}")
             widget.setText(label.replace("&", "&&"))
-
-
-# ---------------------------------------------------------------------------
-# Non-blocking message box helpers (Emscripten-safe)
-# ---------------------------------------------------------------------------
-# On Emscripten, static QMessageBox methods (warning, information, question)
-# call exec_() internally which requires ASYNCIFY.  These helpers use the
-# non-blocking show() path on Emscripten and the normal static call on desktop.
-
-# We keep a reference to the active message box so it isn't garbage-collected
-# before the user closes it.
-_active_msgboxes = []
-
-
-def _remove_msgbox(box):
-    """Remove a message box from the active list after it closes."""
-    try:
-        _active_msgboxes.remove(box)
-    except ValueError:
-        pass
-
-
-def show_warning(parent, title, text):
-    """Show a warning message box (non-blocking on Emscripten)."""
-    if sys.platform == "emscripten":
-        box = QMessageBox(QMessageBox.Warning, title, text, QMessageBox.Ok, parent)
-        box.setModal(True)
-        box.finished.connect(lambda: _remove_msgbox(box))
-        _active_msgboxes.append(box)
-        box.show()
-    else:
-        QMessageBox.warning(parent, title, text)
-
-
-def show_info(parent, title, text):
-    """Show an informational message box (non-blocking on Emscripten)."""
-    if sys.platform == "emscripten":
-        box = QMessageBox(QMessageBox.Information, title, text, QMessageBox.Ok, parent)
-        box.setModal(True)
-        box.finished.connect(lambda: _remove_msgbox(box))
-        _active_msgboxes.append(box)
-        box.show()
-    else:
-        QMessageBox.information(parent, title, text)
-
-
-def show_question(parent, title, text, on_yes, on_no=None):
-    """Show a Yes/No question (non-blocking on Emscripten).
-
-    On desktop, calls the static method and invokes on_yes/on_no synchronously.
-    On Emscripten, uses show() + finished signal with a callback.
-    """
-    if sys.platform == "emscripten":
-        box = QMessageBox(
-            QMessageBox.Question, title, text, QMessageBox.Yes | QMessageBox.No, parent
-        )
-        box.setModal(True)
-
-        def _on_finished():
-            _remove_msgbox(box)
-            if box.clickedButton() == box.button(QMessageBox.Yes):
-                on_yes()
-            elif on_no is not None:
-                on_no()
-
-        box.finished.connect(_on_finished)
-        _active_msgboxes.append(box)
-        box.show()
-    else:
-        result = QMessageBox.question(
-            parent, title, text, QMessageBox.Yes | QMessageBox.No
-        )
-        if result == QMessageBox.Yes:
-            on_yes()
-        elif on_no is not None:
-            on_no()
