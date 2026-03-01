@@ -206,6 +206,12 @@ class VialBridgeKeyboard(VialKeyboard):
 
     def title(self):
         """Display title showing this is a wirelessly-connected device."""
+        # Prefer the real keyboard name from the Vial definition JSON
+        if self.keyboard and self.keyboard.definition:
+            name = self.keyboard.definition.get("name", "")
+            if name:
+                return "{} [2.4G]".format(name)
+        # Fallback to dongle descriptor (before open() completes)
         s = "{} {}".format(
             self._rawhid_desc.get("manufacturer_string", ""),
             self._rawhid_desc.get("product_string", ""),

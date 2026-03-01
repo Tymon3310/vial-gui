@@ -21,6 +21,7 @@ from protocol.keychron import (
     REPORT_RATE_NAMES,
     SNAP_CLICK_TYPE_NAMES,
 )
+from vial_device import VialBridgeKeyboard
 
 
 class AboutKeyboard(QDialog):
@@ -84,11 +85,29 @@ class AboutKeyboard(QDialog):
 
         text = ""
         desc = device.desc
-        text += "Manufacturer: {}\n".format(desc["manufacturer_string"])
-        text += "Product: {}\n".format(desc["product_string"])
-        text += "VID: {:04X}\n".format(desc["vendor_id"])
-        text += "PID: {:04X}\n".format(desc["product_id"])
-        text += "Device: {}\n".format(desc["path"])
+
+        if isinstance(device, VialBridgeKeyboard):
+            # Show the real keyboard identity from the Vial definition
+            kb_name = ""
+            if self.keyboard.definition:
+                kb_name = self.keyboard.definition.get("name", "")
+            text += "Keyboard: {}\n".format(kb_name or "Unknown")
+            # Real VID/PID from the wireless keyboard (retrieved during open)
+            via_id = int(device.via_id)
+            real_vid = (via_id >> 16) & 0xFFFF
+            real_pid = via_id & 0xFFFF
+            text += "VID: {:04X}\n".format(real_vid)
+            text += "PID: {:04X}\n".format(real_pid)
+            text += "Connection: 2.4 GHz wireless via {}\n".format(
+                desc.get("product_string", "Keychron Link")
+            )
+            text += "Dongle: {}\n".format(desc.get("path", ""))
+        else:
+            text += "Manufacturer: {}\n".format(desc["manufacturer_string"])
+            text += "Product: {}\n".format(desc["product_string"])
+            text += "VID: {:04X}\n".format(desc["vendor_id"])
+            text += "PID: {:04X}\n".format(desc["product_id"])
+            text += "Device: {}\n".format(desc["path"])
         text += "\n"
 
         if self.keyboard.sideload:
