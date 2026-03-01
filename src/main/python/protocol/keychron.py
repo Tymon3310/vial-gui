@@ -15,6 +15,7 @@ the Keychron raw HID protocol for features like:
 
 import logging
 import struct
+import sys
 from protocol.base_protocol import BaseProtocol
 
 # Main command IDs (data[0])
@@ -347,7 +348,13 @@ class ProtocolKeychron(BaseProtocol):
         self.keychron_poll_rate_24g_mask = 0x7F
 
         # Connection mode (detected from bridge or direct USB)
-        self.keychron_connection_mode = 2  # 0=2.4G, 1=BT, 2=USB
+        # On the web, if the bridge is active, we're connected via 2.4 GHz.
+        if sys.platform == "emscripten":
+            from hidproxy import hiddevice
+
+            self.keychron_connection_mode = 0 if hiddevice._bridge_active else 2
+        else:
+            self.keychron_connection_mode = 2  # 0=2.4G, 1=BT, 2=USB
 
         # Snap Click
         self.keychron_snap_click_count = 0

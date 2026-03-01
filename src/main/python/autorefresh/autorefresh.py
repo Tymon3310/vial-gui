@@ -143,9 +143,6 @@ class Autorefresh(QObject):
         self.thread.unlock()
 
         # Signal the main thread that opening is complete.
-        logging.info(
-            "Bridge async open complete (error=%s), emitting device_opened", error
-        )
         self.device_opened.emit(device, error)
 
     def on_devices_updated(self, devices, changed):

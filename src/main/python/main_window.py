@@ -404,7 +404,6 @@ class MainWindow(QMainWindow):
 
     def on_device_opened(self, device, error):
         """Called (on the main thread) when async bridge open() finishes."""
-        logging.info("on_device_opened called: device=%s, error=%s", device, error)
         self._async_open_in_progress = False
 
         if error:

@@ -294,6 +294,13 @@ class DfuFlasher(BasicEditor):
         # Can't flash firmware over wireless bridge
         if isinstance(self.device, VialBridgeKeyboard):
             return False
+        # On the web, the bridge is transparent (no VialBridgeKeyboard),
+        # so check the hiddevice class-level flag instead.
+        if sys.platform == "emscripten":
+            from hidproxy import hiddevice
+
+            if hiddevice._bridge_active:
+                return False
         kb = self.device.keyboard
         return callable(getattr(kb, "has_keychron_dfu", None)) and kb.has_keychron_dfu()
 
