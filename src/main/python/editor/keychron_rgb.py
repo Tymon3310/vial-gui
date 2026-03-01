@@ -29,7 +29,6 @@ from PyQt5.QtWidgets import (
     QSlider,
     QColorDialog,
     QTabWidget,
-    QMessageBox,
 )
 
 import logging
@@ -37,7 +36,7 @@ import logging
 from editor.basic_editor import BasicEditor
 from editor.rgb_configurator import VIALRGB_EFFECTS
 from protocol.keychron import PER_KEY_RGB_TYPE_NAMES, PER_KEY_RGB_SOLID
-from util import tr
+from util import tr, show_warning
 from vial_device import VialKeyboard
 from widgets.rgb_keyboard_widget import RGBKeyboardWidget
 
@@ -77,9 +76,17 @@ class ColorButton(QPushButton):
         self.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
 
     def _on_clicked(self):
-        """Open color dialog."""
+        """Open color dialog (non-blocking for Emscripten compatibility)."""
         current = QColor.fromHsv(round(self.h * 359 / 255), self.s, self.v)
-        color = QColorDialog.getColor(current, self, tr("KeychronRGB", "Select Color"))
+        self._dlg_color = QColorDialog()
+        self._dlg_color.setModal(True)
+        self._dlg_color.setCurrentColor(current)
+        self._dlg_color.finished.connect(self._on_color_finished)
+        self._dlg_color.show()
+
+    def _on_color_finished(self):
+        """Handle color dialog result."""
+        color = self._dlg_color.selectedColor()
         if color.isValid():
             # Convert back to 0-255 range
             h, s, v, _ = color.getHsv()
@@ -1050,7 +1057,7 @@ class KeychronRGBEditor(BasicEditor):
 
         led_indices = self.mixed_rgb_keyboard.get_selected_led_indices()
         if not led_indices:
-            QMessageBox.warning(
+            show_warning(
                 self.widget(),
                 tr("KeychronRGB", "No Selection"),
                 tr("KeychronRGB", "Please select keys to assign to a region."),
@@ -1075,7 +1082,7 @@ class KeychronRGBEditor(BasicEditor):
             # Revert local data on failure
             for led_idx, old_val in old_values.items():
                 self.keyboard.keychron_mixed_rgb_regions[led_idx] = old_val
-            QMessageBox.warning(
+            show_warning(
                 self.widget(),
                 tr("KeychronRGB", "Error"),
                 tr("KeychronRGB", "Failed to update region assignments."),

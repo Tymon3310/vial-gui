@@ -411,6 +411,6 @@ class KeychronSettings(BasicEditor):
             self._updating = False
 
     def _show_factory_reset_instructions(self):
-        """Open the factory reset dialog."""
-        dlg = FactoryResetDialog(parent=QApplication.activeWindow())
-        dlg.exec_()
+        """Open the factory reset dialog (non-blocking for Emscripten)."""
+        self._factory_reset_dlg = FactoryResetDialog(parent=QApplication.activeWindow())
+        self._factory_reset_dlg.show()
