@@ -152,6 +152,8 @@ class FactoryResetDialog(QDialog):
         self._done = False
 
         self.setMinimumWidth(420)
+        self.setMinimumHeight(350)
+        self.adjustSize()
 
     # ------------------------------------------------------------------
     # Internal helpers

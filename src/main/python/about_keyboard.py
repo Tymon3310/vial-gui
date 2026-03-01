@@ -222,3 +222,6 @@ class AboutKeyboard(QDialog):
         self.layout.addWidget(self.textarea)
         self.layout.addWidget(self.buttonBox)
         self.setLayout(self.layout)
+
+        self.setMinimumSize(500, 400)
+        self.adjustSize()
