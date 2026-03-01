@@ -42,6 +42,14 @@ FEATURE_KEYCHRON_RGB = 0x80
 FEATURE_QUICK_START = 0x0100
 FEATURE_NKRO = 0x0200
 
+# Feature flags (byte 2) - shifted by 16
+# These require reading data[4] from KC_GET_SUPPORT_FEATURE.
+# NOTE: Bits 16 (Bootloader_Jump), 17 (Performance_Mode), and 18
+# (Support_Toggle) exist in the Keychron Launcher but are ZMK/mouse-only
+# features (e.g. Keychron V Ultra series). They share sub-command IDs with
+# FACTORY_RESET (0x11) and NKRO_GET (0x12) because ZMK devices don't have
+# those commands. We intentionally omit them here since Vial targets QMK.
+
 # Misc command group sub-commands (data[1] when data[0] = 0xA7)
 MISC_GET_PROTOCOL_VER = 0x01
 DFU_INFO_GET = 0x02
@@ -329,9 +337,17 @@ class ProtocolKeychron(BaseProtocol):
         self.keychron_nkro_supported = False
         self.keychron_nkro_adaptive = False
 
-        # Report rate
+        # Report rate (v1 = single rate, v2 = dual USB / 2.4 GHz)
         self.keychron_report_rate = REPORT_RATE_1000HZ
         self.keychron_report_rate_mask = 0x7F  # which rates are supported
+        self.keychron_poll_rate_version = 1  # 1=single, 2=dual
+        self.keychron_poll_rate_usb = REPORT_RATE_1000HZ
+        self.keychron_poll_rate_usb_mask = 0x7F
+        self.keychron_poll_rate_24g = REPORT_RATE_1000HZ
+        self.keychron_poll_rate_24g_mask = 0x7F
+
+        # Connection mode (detected from bridge or direct USB)
+        self.keychron_connection_mode = 2  # 0=2.4G, 1=BT, 2=USB
 
         # Snap Click
         self.keychron_snap_click_count = 0
@@ -639,7 +655,16 @@ class ProtocolKeychron(BaseProtocol):
 
     # Report rate methods
     def _reload_report_rate(self):
-        """Load USB report rate settings."""
+        """Load USB report rate settings, detecting v1 (single) or v2 (dual) format."""
+        # Poll Rate Detect: misc protocol version 3 = dual rate (v2), else single (v1)
+        # This reuses MISC_GET_PROTOCOL_VER (sub-cmd 1) which was already called, so
+        # keychron_misc_protocol_version is already set. The launcher instantiates the
+        # v2 (Te class, dual rate) poll rate handler when misc_protocol_version == 3.
+        if self.keychron_misc_protocol_version == 3:
+            self.keychron_poll_rate_version = 2
+        else:
+            self.keychron_poll_rate_version = 1
+
         data = self.usb_send(
             self.dev, struct.pack("BB", KC_MISC_CMD_GROUP, REPORT_RATE_GET), retries=3
         )
@@ -648,11 +673,33 @@ class ProtocolKeychron(BaseProtocol):
             and data[1] == REPORT_RATE_GET
             and data[2] == KC_SUCCESS
         ):
-            self.keychron_report_rate = data[3]
-            self.keychron_report_rate_mask = data[4] if len(data) > 4 else 0x7F
+            if self.keychron_poll_rate_version == 2:
+                # v2 dual rate: data[3]=current_usb, data[4]=support_usb,
+                #               data[5]=support_fr,  data[6]=current_fr
+                self.keychron_poll_rate_usb = data[3]
+                self.keychron_poll_rate_usb_mask = data[4] if len(data) > 4 else 0x7F
+                self.keychron_poll_rate_24g_mask = data[5] if len(data) > 5 else 0x7F
+                self.keychron_poll_rate_24g = data[6] if len(data) > 6 else data[3]
+                # Keep legacy fields in sync for backward compatibility
+                self.keychron_report_rate = self.keychron_poll_rate_usb
+                self.keychron_report_rate_mask = self.keychron_poll_rate_usb_mask
+                logging.info(
+                    "Keychron: Poll rate v2 (dual) - USB=%d (mask=0x%02X), "
+                    "2.4G=%d (mask=0x%02X)",
+                    self.keychron_poll_rate_usb,
+                    self.keychron_poll_rate_usb_mask,
+                    self.keychron_poll_rate_24g,
+                    self.keychron_poll_rate_24g_mask,
+                )
+            else:
+                # v1 single rate: data[3]=rate, data[4]=support mask
+                self.keychron_report_rate = data[3]
+                self.keychron_report_rate_mask = data[4] if len(data) > 4 else 0x7F
+                self.keychron_poll_rate_usb = self.keychron_report_rate
+                self.keychron_poll_rate_usb_mask = self.keychron_report_rate_mask
 
     def set_keychron_report_rate(self, rate):
-        """Set USB report rate."""
+        """Set USB report rate (v1 single rate)."""
         data = self.usb_send(
             self.dev,
             struct.pack("BBB", KC_MISC_CMD_GROUP, REPORT_RATE_SET, rate),
@@ -665,6 +712,26 @@ class ProtocolKeychron(BaseProtocol):
             and data[2] == KC_SUCCESS
         ):
             self.keychron_report_rate = rate
+            self.keychron_poll_rate_usb = rate
+            return True
+        return False
+
+    def set_keychron_poll_rate_v2(self, usb_rate, fr_rate):
+        """Set dual polling rates (v2): separate USB and 2.4 GHz rates."""
+        data = self.usb_send(
+            self.dev,
+            struct.pack("BBBB", KC_MISC_CMD_GROUP, REPORT_RATE_SET, usb_rate, fr_rate),
+            retries=3,
+        )
+        if (
+            data is not None
+            and data[0] == KC_MISC_CMD_GROUP
+            and data[1] == REPORT_RATE_SET
+            and data[2] == KC_SUCCESS
+        ):
+            self.keychron_poll_rate_usb = usb_rate
+            self.keychron_poll_rate_24g = fr_rate
+            self.keychron_report_rate = usb_rate
             return True
         return False
 
@@ -792,7 +859,13 @@ class ProtocolKeychron(BaseProtocol):
         if self.has_keychron_nkro() and not self.keychron_nkro_adaptive:
             data["nkro"] = {"enabled": self.keychron_nkro_enabled}
         if self.has_keychron_report_rate():
-            data["report_rate"] = self.keychron_report_rate
+            if self.keychron_poll_rate_version == 2:
+                data["report_rate_v2"] = {
+                    "usb": self.keychron_poll_rate_usb,
+                    "fr": self.keychron_poll_rate_24g,
+                }
+            else:
+                data["report_rate"] = self.keychron_report_rate
         if self.has_keychron_wireless():
             data["wireless_lpm"] = {
                 "backlit_time": self.keychron_wireless_backlit_time,
@@ -870,6 +943,16 @@ class ProtocolKeychron(BaseProtocol):
             rate = data["report_rate"]
             if self.keychron_report_rate_mask & (1 << rate):
                 self.set_keychron_report_rate(rate)
+        if "report_rate_v2" in data and self.has_keychron_report_rate():
+            rv2 = data["report_rate_v2"]
+            usb = rv2.get("usb", self.keychron_poll_rate_usb)
+            fr = rv2.get("fr", self.keychron_poll_rate_24g)
+            if self.keychron_poll_rate_version == 2:
+                self.set_keychron_poll_rate_v2(usb, fr)
+            else:
+                # Fallback: apply USB rate as single rate
+                if self.keychron_report_rate_mask & (1 << usb):
+                    self.set_keychron_report_rate(usb)
         if "wireless_lpm" in data and self.has_keychron_wireless():
             w = data["wireless_lpm"]
             self.set_keychron_wireless_lpm(

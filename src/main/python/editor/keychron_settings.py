@@ -33,6 +33,7 @@ from protocol.keychron import (
     REPORT_RATE_8000HZ,
     REPORT_RATE_125HZ,
 )
+from protocol.bridge import CONNECTION_MODE_NAMES
 from util import tr
 from vial_device import VialKeyboard
 
@@ -86,15 +87,23 @@ class KeychronSettings(BasicEditor):
         self.nkro_group.setLayout(nkro_layout)
         container_layout.addWidget(self.nkro_group)
 
-        # Report Rate group
+        # Report Rate group (adapts to v1 single or v2 dual rate)
         self.report_rate_group = QGroupBox(tr("KeychronSettings", "USB Report Rate"))
-        report_rate_layout = QHBoxLayout()
+        report_rate_layout = QGridLayout()
 
-        report_rate_layout.addWidget(QLabel(tr("KeychronSettings", "Polling Rate:")))
+        report_rate_layout.addWidget(
+            QLabel(tr("KeychronSettings", "USB Polling Rate:")), 0, 0
+        )
         self.report_rate = QComboBox()
         self.report_rate.currentIndexChanged.connect(self.on_report_rate_changed)
-        report_rate_layout.addWidget(self.report_rate)
-        report_rate_layout.addStretch()
+        report_rate_layout.addWidget(self.report_rate, 0, 1)
+
+        # 2.4 GHz rate dropdown (only visible when poll rate v2)
+        self.fr_rate_label = QLabel(tr("KeychronSettings", "2.4 GHz Polling Rate:"))
+        report_rate_layout.addWidget(self.fr_rate_label, 1, 0)
+        self.fr_rate = QComboBox()
+        self.fr_rate.currentIndexChanged.connect(self.on_report_rate_changed)
+        report_rate_layout.addWidget(self.fr_rate, 1, 1)
 
         self.report_rate_group.setLayout(report_rate_layout)
         container_layout.addWidget(self.report_rate_group)
@@ -155,6 +164,10 @@ class KeychronSettings(BasicEditor):
 
         self.mcu_label = QLabel()
         container_layout.addWidget(self.mcu_label)
+
+        # Connection info (visible when connected via bridge)
+        self.connection_label = QLabel()
+        container_layout.addWidget(self.connection_label)
 
         container_layout.addStretch()
 
@@ -229,16 +242,58 @@ class KeychronSettings(BasicEditor):
 
             # Update report rate UI
             if self.keyboard.has_keychron_report_rate():
+                is_v2 = getattr(self.keyboard, "keychron_poll_rate_version", 1) == 2
+
+                # Group box title adapts to v1/v2
+                if is_v2:
+                    self.report_rate_group.setTitle(
+                        tr("KeychronSettings", "Polling Rate")
+                    )
+                else:
+                    self.report_rate_group.setTitle(
+                        tr("KeychronSettings", "USB Report Rate")
+                    )
+
+                # USB rate dropdown (always shown)
                 self.report_rate.clear()
+                usb_mask = getattr(
+                    self.keyboard,
+                    "keychron_poll_rate_usb_mask",
+                    self.keyboard.keychron_report_rate_mask,
+                )
                 for rate_id in range(REPORT_RATE_8000HZ, REPORT_RATE_125HZ + 1):
-                    # Check if this rate is supported
-                    if self.keyboard.keychron_report_rate_mask & (1 << rate_id):
+                    if usb_mask & (1 << rate_id):
                         self.report_rate.addItem(
                             REPORT_RATE_NAMES.get(rate_id, f"{rate_id}"), rate_id
                         )
-                idx = self.report_rate.findData(self.keyboard.keychron_report_rate)
+                usb_rate = getattr(
+                    self.keyboard,
+                    "keychron_poll_rate_usb",
+                    self.keyboard.keychron_report_rate,
+                )
+                idx = self.report_rate.findData(usb_rate)
                 if idx >= 0:
                     self.report_rate.setCurrentIndex(idx)
+
+                # 2.4 GHz rate dropdown (only for v2)
+                self.fr_rate_label.setVisible(is_v2)
+                self.fr_rate.setVisible(is_v2)
+                if is_v2:
+                    self.fr_rate.clear()
+                    fr_mask = getattr(
+                        self.keyboard, "keychron_poll_rate_24g_mask", 0x7F
+                    )
+                    for rate_id in range(REPORT_RATE_8000HZ, REPORT_RATE_125HZ + 1):
+                        if fr_mask & (1 << rate_id):
+                            self.fr_rate.addItem(
+                                REPORT_RATE_NAMES.get(rate_id, f"{rate_id}"), rate_id
+                            )
+                    fr_rate = getattr(
+                        self.keyboard, "keychron_poll_rate_24g", REPORT_RATE_8000HZ
+                    )
+                    idx = self.fr_rate.findData(fr_rate)
+                    if idx >= 0:
+                        self.fr_rate.setCurrentIndex(idx)
 
             # Update wireless UI
             if self.keyboard.has_keychron_wireless():
@@ -270,6 +325,17 @@ class KeychronSettings(BasicEditor):
                 self.mcu_label.setVisible(True)
             else:
                 self.mcu_label.setVisible(False)
+
+            # Update connection mode label
+            conn_mode = getattr(self.keyboard, "keychron_connection_mode", 2)
+            if conn_mode != 2:  # Not USB -- show connection mode
+                mode_name = CONNECTION_MODE_NAMES.get(conn_mode, "Unknown")
+                self.connection_label.setText(
+                    tr("KeychronSettings", "Connection: {}").format(mode_name)
+                )
+                self.connection_label.setVisible(True)
+            else:
+                self.connection_label.setVisible(False)
         finally:
             self._updating = False
 
@@ -302,9 +368,27 @@ class KeychronSettings(BasicEditor):
     def on_report_rate_changed(self):
         if self._updating or not self.keyboard:
             return
-        rate = self.report_rate.currentData()
-        if rate is not None:
-            ok = self.keyboard.set_keychron_report_rate(rate)
+        is_v2 = getattr(self.keyboard, "keychron_poll_rate_version", 1) == 2
+        usb_rate = self.report_rate.currentData()
+        if usb_rate is None:
+            return
+
+        if is_v2:
+            fr_rate = self.fr_rate.currentData()
+            if fr_rate is None:
+                return
+            ok = self.keyboard.set_keychron_poll_rate_v2(usb_rate, fr_rate)
+            if not ok:
+                self._updating = True
+                idx = self.report_rate.findData(self.keyboard.keychron_poll_rate_usb)
+                if idx >= 0:
+                    self.report_rate.setCurrentIndex(idx)
+                idx = self.fr_rate.findData(self.keyboard.keychron_poll_rate_24g)
+                if idx >= 0:
+                    self.fr_rate.setCurrentIndex(idx)
+                self._updating = False
+        else:
+            ok = self.keyboard.set_keychron_report_rate(usb_rate)
             if not ok:
                 self._updating = True
                 idx = self.report_rate.findData(self.keyboard.keychron_report_rate)

@@ -45,7 +45,7 @@ from PyQt5.QtWidgets import (
 from editor.basic_editor import BasicEditor
 from unlocker import Unlocker
 from util import tr, find_vial_devices
-from vial_device import VialKeyboard
+from vial_device import VialKeyboard, VialBridgeKeyboard
 
 # How long (seconds) to wait for DFU device before giving up
 DFU_WAIT_TIMEOUT = 60
@@ -290,6 +290,9 @@ class DfuFlasher(BasicEditor):
 
     def valid(self):
         if not isinstance(self.device, VialKeyboard):
+            return False
+        # Can't flash firmware over wireless bridge
+        if isinstance(self.device, VialBridgeKeyboard):
             return False
         kb = self.device.keyboard
         return callable(getattr(kb, "has_keychron_dfu", None)) and kb.has_keychron_dfu()

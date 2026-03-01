@@ -48,7 +48,7 @@ from tabbed_keycodes import TabbedKeycodes
 from editor.tap_dance import TapDance
 from unlocker import Unlocker
 from util import tr, EXAMPLE_KEYBOARDS, KeycodeDisplay, EXAMPLE_KEYBOARD_PREFIX
-from vial_device import VialKeyboard
+from vial_device import VialKeyboard, VialBridgeKeyboard
 from editor.matrix_test import MatrixTest
 
 import themes
@@ -169,8 +169,11 @@ class MainWindow(QMainWindow):
 
         self.init_menu()
 
+        self._async_open_in_progress = False
+
         self.autorefresh = Autorefresh()
         self.autorefresh.devices_updated.connect(self.on_devices_updated)
+        self.autorefresh.device_opened.connect(self.on_device_opened)
 
         # cache for via definition files
         self.cache_path = QStandardPaths.writableLocation(QStandardPaths.CacheLocation)
@@ -337,6 +340,13 @@ class MainWindow(QMainWindow):
         self.autorefresh.update(quiet=False, hard=True)
 
     def on_devices_updated(self, devices, hard_refresh):
+        if self._async_open_in_progress:
+            # Don't update the device list or trigger re-selection while an
+            # async bridge open is in progress — the autorefresh thread may
+            # have completed a find_vial_devices() that started before we
+            # locked it.  Just discard the stale update.
+            return
+
         self.combobox_devices.blockSignals(True)
 
         self.combobox_devices.clear()
@@ -361,8 +371,14 @@ class MainWindow(QMainWindow):
             self.on_device_selected()
 
     def on_device_selected(self):
+        if self._async_open_in_progress:
+            # An async bridge open is already running — don't start another one.
+            return
+
         try:
-            self.autorefresh.select_device(self.combobox_devices.currentIndex())
+            is_async = self.autorefresh.select_device(
+                self.combobox_devices.currentIndex()
+            )
         except ProtocolError:
             QMessageBox.warning(
                 self,
@@ -370,6 +386,45 @@ class MainWindow(QMainWindow):
                 "Unsupported protocol version!\n"
                 "Please download latest Vial from https://get.vial.today/",
             )
+            return
+
+        if is_async:
+            # Bridge device — open() is running in a background thread.
+            # Show a "Connecting..." placeholder and wait for device_opened.
+            self._async_open_in_progress = True
+            self.setWindowTitle("Vial — Connecting...")
+            self.tabs.hide()
+            self.lbl_no_devices.setText(
+                tr("MainWindow", "Connecting to wireless keyboard...")
+            )
+            self.lbl_no_devices.show()
+            return
+
+        self._finish_device_selected()
+
+    def on_device_opened(self, device, error):
+        """Called (on the main thread) when async bridge open() finishes."""
+        logging.info("on_device_opened called: device=%s, error=%s", device, error)
+        self._async_open_in_progress = False
+
+        if error:
+            logging.warning("Wireless keyboard connection failed: %s", error)
+            self.lbl_no_devices.setText(
+                tr(
+                    "MainWindow",
+                    "Failed to connect to wireless keyboard: {}".format(error),
+                )
+            )
+            self.lbl_no_devices.show()
+            self.tabs.hide()
+            self.setWindowTitle("Vial")
+            return
+
+        self._finish_device_selected()
+
+    def _finish_device_selected(self):
+        """Common path after device is opened (sync or async)."""
+        self.setWindowTitle("Vial")
 
         if isinstance(self.autorefresh.current_device, VialKeyboard):
             keyboard_id = self.autorefresh.current_device.keyboard.keyboard_id
@@ -385,6 +440,11 @@ class MainWindow(QMainWindow):
 
         self.rebuild()
         self.refresh_tabs()
+
+        # Ensure the tab widget is visible (the async path hides it while
+        # showing "Connecting...").
+        self.lbl_no_devices.hide()
+        self.tabs.show()
 
     def rebuild(self):
         # don't show "Security" menu for bootloader mode, as the bootloader is inherently insecure

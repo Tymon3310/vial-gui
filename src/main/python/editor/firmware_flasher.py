@@ -9,17 +9,25 @@ import sys
 
 from PyQt5.QtCore import pyqtSignal, QCoreApplication
 from PyQt5.QtGui import QFontDatabase
-from PyQt5.QtWidgets import QHBoxLayout, QLineEdit, QToolButton, QPlainTextEdit, QProgressBar, QFileDialog, QDialog, \
-    QCheckBox
+from PyQt5.QtWidgets import (
+    QHBoxLayout,
+    QLineEdit,
+    QToolButton,
+    QPlainTextEdit,
+    QProgressBar,
+    QFileDialog,
+    QDialog,
+    QCheckBox,
+)
 
 from editor.basic_editor import BasicEditor
 from unlocker import Unlocker
 from util import tr, chunks, find_vial_devices, pad_for_vibl
-from vial_device import VialBootloader, VialKeyboard
+from vial_device import VialBootloader, VialKeyboard, VialBridgeKeyboard
 
 
 def send_retries(dev, data, retries=200):
-    """ Sends usb packet up to 'retries' times, returns True if success, False if failed """
+    """Sends usb packet up to 'retries' times, returns True if success, False if failed"""
 
     if len(data) != 64:
         raise RuntimeError("sending invalid data length")
@@ -38,22 +46,29 @@ def send_retries(dev, data, retries=200):
 CHUNK = 64
 
 
-def cmd_flash(device, firmware, enable_insecure, log_cb, progress_cb, complete_cb, error_cb):
+def cmd_flash(
+    device, firmware, enable_insecure, log_cb, progress_cb, complete_cb, error_cb
+):
     if firmware[0:8] not in [b"VIALFW00", b"VIALFW01"]:
         return error_cb("Error: Invalid signature")
 
     fw_uid = firmware[8:16]
     fw_ts = struct.unpack("<Q", firmware[16:24])[0]
-    log_cb("* Firmware build date: {} (UTC)".format(datetime.datetime.utcfromtimestamp(fw_ts)))
+    log_cb(
+        "* Firmware build date: {} (UTC)".format(
+            datetime.datetime.utcfromtimestamp(fw_ts)
+        )
+    )
 
     fw_hash = firmware[32:64]
     fw_payload = firmware[64:]
 
     if hashlib.sha256(fw_payload).digest() != fw_hash:
-        return error_cb("Error: Firmware failed integrity check\n\texpected={}\n\tgot={}".format(
-            fw_hash.hex(),
-            hashlib.sha256(fw_payload).hexdigest()
-        ))
+        return error_cb(
+            "Error: Firmware failed integrity check\n\texpected={}\n\tgot={}".format(
+                fw_hash.hex(), hashlib.sha256(fw_payload).hexdigest()
+            )
+        )
 
     # Check bootloader is correct version
     send_retries(device, pad_for_vibl(b"VC\x00"))
@@ -66,15 +81,18 @@ def cmd_flash(device, firmware, enable_insecure, log_cb, progress_cb, complete_c
     uid = device.recv(8)
     log_cb("* Vial ID: {}".format(uid.hex()))
 
-    if uid == b"\xFF" * 8:
-        log_cb("\n\n\n!!! WARNING !!!\nBootloader UID is not set, make sure to configure it"
-               " before releasing production firmware\n!!! WARNING !!!\n\n")
+    if uid == b"\xff" * 8:
+        log_cb(
+            "\n\n\n!!! WARNING !!!\nBootloader UID is not set, make sure to configure it"
+            " before releasing production firmware\n!!! WARNING !!!\n\n"
+        )
 
     if uid != fw_uid:
-        return error_cb("Error: Firmware package was built for different device\n\texpected={}\n\tgot={}".format(
-            fw_uid.hex(),
-            uid.hex()
-        ))
+        return error_cb(
+            "Error: Firmware package was built for different device\n\texpected={}\n\tgot={}".format(
+                fw_uid.hex(), uid.hex()
+            )
+        )
 
     # OK all checks complete, we can flash now
     while len(fw_payload) % CHUNK != 0:
@@ -82,7 +100,9 @@ def cmd_flash(device, firmware, enable_insecure, log_cb, progress_cb, complete_c
 
     # Flash
     log_cb("Flashing...")
-    send_retries(device, pad_for_vibl(b"VC\x02" + struct.pack("<H", len(fw_payload) // CHUNK)))
+    send_retries(
+        device, pad_for_vibl(b"VC\x02" + struct.pack("<H", len(fw_payload) // CHUNK))
+    )
     total = 0
     for part in chunks(fw_payload, CHUNK):
         if not send_retries(device, part):
@@ -141,7 +161,9 @@ class FirmwareFlasher(BasicEditor):
         progress_flash.addWidget(self.btn_flash)
         self.chk_restore_keymap = QCheckBox(main)
         self.chk_restore_keymap.hide()
-        self.chk_restore_keymap.setText(tr("Flasher", "Restore current layout after flashing"))
+        self.chk_restore_keymap.setText(
+            tr("Flasher", "Restore current layout after flashing")
+        )
         self.chk_restore_keymap.setChecked(True)
         self.addWidget(self.chk_restore_keymap)
         self.addLayout(progress_flash)
@@ -158,16 +180,24 @@ class FirmwareFlasher(BasicEditor):
             return
 
         if isinstance(self.device, VialBootloader):
-            self.log("Valid Vial Bootloader device at {}".format(self.device.desc["path"].decode("utf-8")))
+            self.log(
+                "Valid Vial Bootloader device at {}".format(
+                    self.device.desc["path"].decode("utf-8")
+                )
+            )
             self.chk_restore_keymap.hide()
         elif isinstance(self.device, VialKeyboard):
             self.log("Vial keyboard detected")
             self.chk_restore_keymap.show()
 
     def valid(self):
-        return (isinstance(self.device, VialBootloader) or \
-               (isinstance(self.device, VialKeyboard) and self.device.keyboard.vibl)) \
-               and sys.platform != "emscripten"
+        # Can't flash firmware over wireless bridge
+        if isinstance(self.device, VialBridgeKeyboard):
+            return False
+        return (
+            isinstance(self.device, VialBootloader)
+            or (isinstance(self.device, VialKeyboard) and self.device.keyboard.vibl)
+        ) and sys.platform != "emscripten"
 
     def find_device_with_uid(self, cls, uid):
         devices = find_vial_devices({"definitions": {}})
@@ -195,7 +225,9 @@ class FirmwareFlasher(BasicEditor):
             firmware = inf.read()
 
         if len(firmware) > 10 * 1024 * 1024:
-            self.log("Error: Firmware is too large. Check you've selected the correct file")
+            self.log(
+                "Error: Firmware is too large. Check you've selected the correct file"
+            )
             return
 
         self.log("Preparing to flash...")
@@ -213,7 +245,9 @@ class FirmwareFlasher(BasicEditor):
             self.uid_restore = self.device.keyboard.get_uid()
             firmware_uid = firmware[8:16]
             if self.uid_restore != firmware_uid:
-                self.log("Error: Firmware UID does not match keyboard UID. Check that you have the correct file")
+                self.log(
+                    "Error: Firmware UID does not match keyboard UID. Check that you have the correct file"
+                )
                 self.unlock_ui(False)
                 return
 
@@ -230,13 +264,25 @@ class FirmwareFlasher(BasicEditor):
                 time.sleep(1)
                 found = self.find_device_with_uid(VialBootloader, self.uid_restore)
 
-            self.log("Found Vial Bootloader device at {}".format(found.desc["path"].decode("utf-8")))
+            self.log(
+                "Found Vial Bootloader device at {}".format(
+                    found.desc["path"].decode("utf-8")
+                )
+            )
             found.open()
             self.device = found
 
-        threading.Thread(target=lambda: cmd_flash(
-            self.device, firmware, self.layout_restore is not None,
-            self.on_log, self.on_progress, self.on_complete, self.on_error)).start()
+        threading.Thread(
+            target=lambda: cmd_flash(
+                self.device,
+                firmware,
+                self.layout_restore is not None,
+                self.on_log,
+                self.on_progress,
+                self.on_complete,
+                self.on_error,
+            )
+        ).start()
 
     def on_log(self, line):
         self.log_signal.emit(line)
@@ -269,7 +315,9 @@ class FirmwareFlasher(BasicEditor):
                 time.sleep(1)
                 found = self.find_device_with_uid(VialKeyboard, self.uid_restore)
 
-            self.log("Found Vial keyboard at {}".format(found.desc["path"].decode("utf-8")))
+            self.log(
+                "Found Vial keyboard at {}".format(found.desc["path"].decode("utf-8"))
+            )
             found.open()
             self.device = found
             self.log("Restoring saved layout...")

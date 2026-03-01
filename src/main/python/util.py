@@ -4,6 +4,7 @@ import os
 import pathlib
 import sys
 import time
+import threading
 from logging.handlers import RotatingFileHandler
 
 from PyQt5.QtCore import QCoreApplication, QStandardPaths
@@ -106,12 +107,48 @@ def is_rawhid(desc, quiet):
     return True
 
 
+def is_bridge_hid(desc, quiet=False):
+    """Check if a HID device descriptor matches a Keychron 2.4 GHz bridge/dongle."""
+    from protocol.bridge import BRIDGE_USAGE_PAGE, BRIDGE_USAGE
+
+    if desc["usage_page"] != BRIDGE_USAGE_PAGE or desc["usage"] != BRIDGE_USAGE:
+        return False
+    if not quiet:
+        logging.info(
+            "is_bridge_hid: %s matches bridge (usage_page=0x%04X, usage=0x%02X)",
+            desc["path"],
+            desc["usage_page"],
+            desc["usage"],
+        )
+    return True
+
+
+# Cache for bridge probe results: path -> (result, via_id)
+# Once a bridge is probed, the result is cached permanently as long as the
+# device is present in USB enumeration.  Re-probing would require opening the
+# HID interface, which conflicts with an already-open connection.
+_bridge_probe_cache = {}
+_bridge_probe_lock = threading.Lock()
+
+
 def find_vial_devices(
-    via_stack_json, sideload_vid=None, sideload_pid=None, quiet=False
+    via_stack_json,
+    sideload_vid=None,
+    sideload_pid=None,
+    quiet=False,
+    active_bridge_path=None,
 ):
-    from vial_device import VialBootloader, VialKeyboard, VialDummyKeyboard
+    from vial_device import (
+        VialBootloader,
+        VialKeyboard,
+        VialDummyKeyboard,
+        VialBridgeKeyboard,
+    )
 
     filtered = []
+    bridge_descs = []  # collect bridge descriptors for a second pass
+    bridge_rawhid_paths = set()  # track active bridge paths for cache eviction
+
     for dev in hid.enumerate():
         if dev["vendor_id"] == sideload_vid and dev["product_id"] == sideload_pid:
             if not quiet:
@@ -163,6 +200,103 @@ def find_vial_devices(
                 )
             if is_rawhid(dev, quiet):
                 filtered.append(VialKeyboard(dev, via_stack=True))
+        elif is_bridge_hid(dev, quiet):
+            # Keychron 2.4 GHz bridge/dongle -- collect for second pass
+            bridge_descs.append(dev)
+
+    # Second pass: for each bridge, find sibling 0xFF60 interface and probe.
+    # Use a lock to prevent concurrent find_vial_devices() calls (from the
+    # autorefresh thread and the main thread) from both probing the same
+    # bridge simultaneously, which corrupts the HID communication.
+    with _bridge_probe_lock:
+        for bridge_desc in bridge_descs:
+            try:
+                # Find the 0xFF60/0x61 raw HID interface on the same VID/PID
+                rawhid_desc = None
+                for dev in hid.enumerate():
+                    if (
+                        dev["vendor_id"] == bridge_desc["vendor_id"]
+                        and dev["product_id"] == bridge_desc["product_id"]
+                        and dev["usage_page"] == 0xFF60
+                        and dev["usage"] == 0x61
+                    ):
+                        rawhid_desc = dev
+                        break
+                if rawhid_desc is None:
+                    if not quiet:
+                        logging.warning(
+                            "Bridge VID=%04X PID=%04X: no sibling 0xFF60 interface found",
+                            bridge_desc["vendor_id"],
+                            bridge_desc["product_id"],
+                        )
+                    continue
+
+                rawhid_path = rawhid_desc["path"]
+                bridge_rawhid_paths.add(rawhid_path)
+
+                # Check probe cache — cached permanently while device present.
+                # Never re-probe: opening the HID interface would conflict with
+                # any active connection the main thread holds on the same device.
+                cached = _bridge_probe_cache.get(rawhid_path)
+                if cached is not None:
+                    cached_result, cached_via_id = cached
+                    if cached_result:
+                        bridge_dev = VialBridgeKeyboard(bridge_desc, rawhid_desc)
+                        bridge_dev.via_id = cached_via_id
+                        filtered.append(bridge_dev)
+                    continue
+
+                # Don't probe if the main thread currently has this device open.
+                # This prevents the autorefresh thread from interfering with an
+                # active wireless session after a cache miss (e.g. replug).
+                if active_bridge_path is not None and rawhid_path == active_bridge_path:
+                    if not quiet:
+                        logging.info(
+                            "Bridge: skipping probe for active device %s",
+                            rawhid_path,
+                        )
+                    continue
+
+                bridge_dev = VialBridgeKeyboard(bridge_desc, rawhid_desc)
+                if not quiet:
+                    logging.info(
+                        "Bridge VID=%04X PID=%04X detect=%s rawhid=%s - probing",
+                        bridge_desc["vendor_id"],
+                        bridge_desc["product_id"],
+                        bridge_desc["path"],
+                        rawhid_desc["path"],
+                    )
+                # Probe the bridge -- this opens the 0xFF60 interface, runs FR
+                # handshake, and checks if a keyboard is wirelessly connected
+                if bridge_dev.probe():
+                    _bridge_probe_cache[rawhid_path] = (True, bridge_dev.via_id)
+                    filtered.append(bridge_dev)
+                    if not quiet:
+                        logging.info("Bridge: wireless keyboard detected")
+                else:
+                    _bridge_probe_cache[rawhid_path] = (False, None)
+                    if not quiet:
+                        logging.info("Bridge: no wireless keyboard connected")
+            except Exception as e:
+                if not quiet:
+                    logging.warning("Bridge probe failed: %s", e)
+
+    # Deduplicate: if the same keyboard is connected via both USB and bridge,
+    # prefer the USB connection and suppress the bridge entry
+    usb_via_ids = set()
+    for dev in filtered:
+        if isinstance(dev, VialKeyboard) and not isinstance(dev, VialBridgeKeyboard):
+            usb_via_ids.add(dev.via_id)
+    filtered = [
+        dev
+        for dev in filtered
+        if not isinstance(dev, VialBridgeKeyboard) or dev.via_id not in usb_via_ids
+    ]
+
+    # Evict cache entries for bridges no longer present
+    stale = [p for p in _bridge_probe_cache if p not in bridge_rawhid_paths]
+    for p in stale:
+        del _bridge_probe_cache[p]
 
     if sideload_vid == sideload_pid == 0:
         filtered.append(VialDummyKeyboard())

@@ -3,9 +3,11 @@ import time
 import sys
 
 if sys.platform == "emscripten":
+
     class RLock:
         def __enter__(self):
             pass
+
         def __exit__(self, *args):
             pass
 else:
@@ -17,7 +19,6 @@ from util import find_vial_devices
 
 
 class AutorefreshThread(QThread):
-
     devices_updated = pyqtSignal(object, bool)
 
     def __init__(self):
@@ -56,10 +57,25 @@ class AutorefreshThread(QThread):
             via_stack_json = self.via_stack_json
             sideload_vid = self.sideload_vid
             sideload_pid = self.sideload_pid
+            # Get the active bridge path so find_vial_devices() can skip
+            # probing for a device the main thread currently has open.
+            active_bridge_path = None
+            cur = self.current_device
+            if cur is not None:
+                from vial_device import VialBridgeKeyboard
+
+                if isinstance(cur, VialBridgeKeyboard):
+                    active_bridge_path = cur.desc.get("path")
 
         # this can take a long (~seconds) time on Windows, so run outside of mutex
         # to make sure calling lock() and unlock() is instant
-        new_devices = find_vial_devices(via_stack_json, sideload_vid, sideload_pid, quiet=quiet)
+        new_devices = find_vial_devices(
+            via_stack_json,
+            sideload_vid,
+            sideload_pid,
+            quiet=quiet,
+            active_bridge_path=active_bridge_path,
+        )
 
         # this is fast again but discard results if we got lock()ed in between
         with self.mutex:
