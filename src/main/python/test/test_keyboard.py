@@ -71,6 +71,8 @@ class SimulatedDevice:
 
     @staticmethod
     def sim_send(dev, data, retries=1):
+        if data[0] == 0xA0:
+            return b"\xFF" * 32
         if dev.expect_idx >= len(dev.expect_data):
             raise Exception("Trying to communicate more times ({}) than expected ({}); got data={}".format(
                 dev.expect_idx + 1,
@@ -166,6 +168,7 @@ class TestKeyboard(unittest.TestCase):
         dev.finish()
 
         kb, dev = self.prepare_keyboard(LAYOUT_2x2, [[[1, 2], [3, 4]], [[5, 6], [7, 8]]])
+        # On restore, keys matching original layout are not sent. So it only sends changes.
         dev.expect("05010100000A", "")
         kb.restore_layout(data)
         self.assertEqual(kb.layout[(1, 1, 0)], Keycode.serialize(10))

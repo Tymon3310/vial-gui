@@ -12,6 +12,7 @@ class FakeKeyboard:
     midi = None
 
     def __init__(self, protocol):
+        self.via_protocol = 9
         self.vial_protocol = protocol
         if protocol >= 6:
             self.supported_features = set([
