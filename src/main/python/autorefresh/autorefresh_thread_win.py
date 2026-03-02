@@ -29,7 +29,15 @@ class AutorefreshThreadWin(AutorefreshThread):
         wc.hInstance = win32api.GetModuleHandle(None)
         wc.lpszClassName = "VIAL_DEVICE_DETECTION"
         wc.lpfnWndProc = { win32con.WM_DEVICECHANGE: device_changed }
-        class_atom = win32gui.RegisterClass(wc)
+        
+        try:
+            class_atom = win32gui.RegisterClass(wc)
+        except win32gui.error as e:
+            if e.winerror == 1410: # Class already exists
+                pass
+            else:
+                raise
+
         hwnd = win32gui.CreateWindowEx(0, "VIAL_DEVICE_DETECTION", None, 0, 0, 0, 0, 0, win32con.HWND_MESSAGE, None, None, None)
 
         hdev = win32gui.RegisterDeviceNotification(

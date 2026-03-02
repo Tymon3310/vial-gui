@@ -275,8 +275,8 @@ def test_key_change(qtbot):
     bk = mw.keymap_editor.tabbed_keycodes.basic_keycodes
 
     # at this point we can select all keycodes so basic should be hidden
-    assert ak.isVisible()
-    assert not bk.isVisible()
+    assert ak.isHidden() == False
+    assert not bk.isHidden() == False
 
     # change current key to B
     assert ak.currentIndex() == 0
@@ -293,7 +293,7 @@ def test_key_change(qtbot):
 
     def find_key_btn(start, text):
         for w in start.findChildren(SquareButton):
-            if w.isVisible() and w.text == text:
+            if w.isHidden() == False and w.text == text:
                 return w
         raise RuntimeError("cannot find a visible key button with text='{}'".format(text))
 
@@ -333,8 +333,8 @@ def test_key_change(qtbot):
     assert mw.keymap_editor.container.active_mask
 
     # now only basic keys should be settable
-    assert not ak.isVisible()
-    assert bk.isVisible()
+    assert not ak.isHidden() == False
+    assert bk.isHidden() == False
 
     # let's set key C
     btn = find_key_btn(bk, "C")
@@ -346,8 +346,8 @@ def test_key_change(qtbot):
     # and we should have moved to the next key, setting the full key and not the inner
     assert mw.keymap_editor.container.active_key == mw.keymap_editor.container.widgets[2]
     assert not mw.keymap_editor.container.active_mask
-    assert ak.isVisible()
-    assert not bk.isVisible()
+    assert ak.isHidden() == False
+    assert not bk.isHidden() == False
 
 
 def test_keymap_zoom(qtbot):
@@ -381,7 +381,7 @@ def test_keymap_zoom(qtbot):
 
 def find_key_btn(start, text):
     for w in start.findChildren(SquareButton):
-        if w.isVisible() and w.text == text:
+        if w.isHidden() == False and w.text == text:
             return w
     raise RuntimeError("cannot find a visible key button with text='{}'".format(text))
 
@@ -480,7 +480,7 @@ def test_combos(qtbot):
 
     # ok now still on tab index 2, let's switch some combos
     # change "Key 1" to "A"
-    assert not mw.tray_keycodes.isVisible()
+    assert not mw.tray_keycodes.isHidden() == False
     w = ct.widget(ct.currentIndex()).findChildren(KeyWidget)
     bbox = w[0].widgets[0].bbox
     min_x = min(p.x() for p in bbox)
@@ -490,7 +490,7 @@ def test_combos(qtbot):
     pos_mask = QPoint(int((min_x + max_x) / 2), int(min_y + (max_y - min_y) * 4/5))
     pos = QPoint(int(bbox[0].x()), int(bbox[0].y()))
     qtbot.mouseClick(w[0], qt_api.QtCore.Qt.MouseButton.LeftButton, pos=pos)
-    assert mw.tray_keycodes.isVisible()
+    assert mw.tray_keycodes.isHidden() == False
 
     qtbot.mouseClick(find_key_btn(mw.tray_keycodes, "A"), qt_api.QtCore.Qt.MouseButton.LeftButton)
     assert vk.combos[2] in [(4, 0x106, 0, 0, 0), (4, 262, 0, 0, 0), (4, 0, 0, 0, 0)]
@@ -506,23 +506,23 @@ def test_combos(qtbot):
     # change "Key 4" to LSft(D)
     # first set up LSft(kc)
     qtbot.mouseClick(w[3], qt_api.QtCore.Qt.MouseButton.LeftButton, pos=pos)
-    assert ak.isVisible()
-    assert not bk.isVisible()
+    assert ak.isHidden() == False
+    assert not bk.isHidden() == False
     ak.setCurrentIndex(3)
     assert ak.tabText(ak.currentIndex()) == "Quantum"
     qtbot.mouseClick(find_key_btn(mw.tray_keycodes, "LSft\n(kc)"), qt_api.QtCore.Qt.MouseButton.LeftButton)
     assert vk.combos[2] in [(4, 0x106, 0, 0x200, 5), (4, 262, 0, 512, 5), (4, 0, 0, 512, 5), (4, 0, 0, 0, 5)]
     # now click the mask and set up D inside
     qtbot.mouseClick(w[3], qt_api.QtCore.Qt.MouseButton.LeftButton, pos=pos_mask)
-    assert not ak.isVisible()
-    assert bk.isVisible()
+    assert not ak.isHidden() == False
+    assert bk.isHidden() == False
     qtbot.mouseClick(find_key_btn(mw.tray_keycodes, "D"), qt_api.QtCore.Qt.MouseButton.LeftButton)
     assert vk.combos[2] in [(4, 0x106, 0, 0x207, 5), (4, 262, 0, 519, 5), (4, 0, 0, 519, 5), (4, 0, 0, 0, 5)]
 
     # change "Key 2" to E
     qtbot.mouseClick(w[1], qt_api.QtCore.Qt.MouseButton.LeftButton, pos=pos)
-    assert ak.isVisible()
-    assert not bk.isVisible()
+    assert ak.isHidden() == False
+    assert not bk.isHidden() == False
     ak.setCurrentIndex(0)
     qtbot.mouseClick(find_key_btn(mw.tray_keycodes, "E"), qt_api.QtCore.Qt.MouseButton.LeftButton)
     assert vk.combos[2] in [(4, 8, 0, 0x207, 5), (4, 8, 0, 519, 5), (4, 8, 0, 0, 5)]
@@ -570,7 +570,7 @@ def test_tap_dance(qtbot):
 
     # ok now still on tab index 2, let's switch the tap dance
     # change "Key 1" to "A"
-    assert not mw.tray_keycodes.isVisible()
+    assert not mw.tray_keycodes.isHidden() == False
     w = td.widget(td.currentIndex()).findChildren(KeyWidget)
     bbox = w[0].widgets[0].bbox
     min_x = min(p.x() for p in bbox)
@@ -580,7 +580,7 @@ def test_tap_dance(qtbot):
     pos_mask = QPoint(int((min_x + max_x) / 2), int(min_y + (max_y - min_y) * 4/5))
     pos = QPoint(int(bbox[0].x()), int(bbox[0].y()))
     qtbot.mouseClick(w[0], qt_api.QtCore.Qt.MouseButton.LeftButton, pos=pos)
-    assert mw.tray_keycodes.isVisible()
+    assert mw.tray_keycodes.isHidden() == False
 
     # note that for the tap dance the keycode change is immediate but not the timeout change
     qtbot.mouseClick(find_key_btn(mw.tray_keycodes, "A"), qt_api.QtCore.Qt.MouseButton.LeftButton)
