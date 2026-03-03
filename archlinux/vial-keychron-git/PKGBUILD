@@ -11,7 +11,7 @@ url="https://github.com/Tymon3310/vial-gui"
 license=('GPL-2.0-only')
 options=(!strip !debug)
 depends=('python' 'python-pyqt5' 'python-pip' 'hidapi' 'hicolor-icon-theme')
-makedepends=('git' 'python-setuptools' 'python-wheel' 'python-pyinstaller')
+makedepends=('git' 'python-setuptools' 'python-wheel')
 provides=("vial" "vial-keychron")
 conflicts=("vial" "vial-appimage" "vial-bin" "vial-keychron-bin")
 source=('vial-gui::git+https://github.com/Tymon3310/vial-gui.git'
@@ -31,6 +31,10 @@ build() {
   python -m venv venv
   source venv/bin/activate
   python -m pip install --upgrade pip
+  
+  # We install pyinstaller directly through pip in the venv, 
+  # because arch doesn't have it in standard repos
+  pip install pyinstaller
   pip install -r requirements.txt
   
   # Build the executable using PyInstaller directly (no AppImage)
