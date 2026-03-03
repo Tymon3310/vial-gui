@@ -1,0 +1,3 @@
+# Kernel command line: usbcore.autosuspend=-1
+# Keyboards and standard USB devices
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", MODE="0666", TAG+="uaccess", TAG+="udev-acl"
