@@ -53,40 +53,47 @@ jobs:
         path: Vial-x86_64.AppImage
 
   build-mac:
-    runs-on: macos-latest
-    env:
-      MACOSX_DEPLOYMENT_TARGET: 10.9
-
-    steps:
-    - uses: actions/checkout@v4
-    
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-
-    - name: Setup venv and install dependencies
-      run: |
-        python3 -m venv venv
-        . venv/bin/activate
-        python3 -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r test-requirements.txt
-
-    - name: Run Tests
-      run: |
-        . venv/bin/activate
-        python -m pytest src/main/python/test/
-
-    - name: Build
-      run: |
-        . venv/bin/activate
-        pyinstaller misc/Vial.spec
-        hdiutil create -volname Vial -srcfolder "dist/Vial.app" -ov -format UDZO vial-mac.dmg
-
-    - uses: actions/upload-artifact@v4
-      with:
-        name: vial-mac
-        path: vial-mac.dmg
+      strategy:
+        matrix:
+          include:
+            - runner: macos-latest
+              arch: arm64
+            - runner: macos-13
+              arch: x86_64
+      runs-on: ${{ matrix.runner }}
+      env:
+        MACOSX_DEPLOYMENT_TARGET: 10.9
+  
+      steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+  
+      - name: Setup venv and install dependencies
+        run: |
+          python3 -m venv venv
+          . venv/bin/activate
+          python3 -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r test-requirements.txt
+  
+      - name: Run Tests
+        run: |
+          . venv/bin/activate
+          python -m pytest src/main/python/test/
+  
+      - name: Build
+        run: |
+          . venv/bin/activate
+          pyinstaller misc/Vial.spec
+          hdiutil create -volname Vial -srcfolder "dist/Vial.app" -ov -format UDZO vial-mac-${{ matrix.arch }}.dmg
+  
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vial-mac-${{ matrix.arch }}
+          path: vial-mac-${{ matrix.arch }}.dmg
 
   build-win:
     runs-on: windows-2025
