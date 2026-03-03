@@ -1,5 +1,4 @@
 # Maintainer: Tymon <tymon@example.com>
-# Based off of: https://daveparrish.net/posts/2019-11-16-Better-AppImage-PKGBUILD-template.html
 
 _pkgname=vial-keychron
 _Pkgname=Vial
@@ -21,6 +20,7 @@ source_x86_64=("${_appimage}::https://github.com/Tymon3310/vial-gui/releases/dow
 noextract=("${_appimage}")
 sha256sums_x86_64=('SKIP'
                    'SKIP')
+
 prepare() {
     chmod +x "${_appimage}"
     ./"${_appimage}" --appimage-extract
@@ -28,27 +28,28 @@ prepare() {
 
 build() {
     # Adjust .desktop so it will work outside of AppImage container
-    sed -i -E "s|Exec=Vial|Exec=env DESKTOPINTEGRATION=false /usr/bin/${_pkgname}|"\
+    sed -i -E "s|Exec=Vial|Exec=env DESKTOPINTEGRATION=false /usr/bin/${_pkgname}|" \
         "squashfs-root/${_Pkgname}.desktop"
-    # Fix permissions; .AppImage permissions are 700 for all directories
-    chmod -R a-x+rX squashfs-root/usr
 }
 
 package() {
-    # AppImage
-    install -Dm755 "${srcdir}/${_appimage}" "${pkgdir}/opt/${pkgname}/${pkgname}.AppImage"
+    # Install the raw AppImage to /opt
+    install -Dm755 "${srcdir}/${_appimage}" "${pkgdir}/opt/${_pkgname}/${_pkgname}.AppImage"
 
-    # Desktop file
-    install -Dm644 "${srcdir}/squashfs-root/${_Pkgname}.desktop"\
+    # Install Desktop file from the extracted AppImage
+    install -Dm644 "${srcdir}/squashfs-root/${_Pkgname}.desktop" \
             "${pkgdir}/usr/share/applications/${_pkgname}.desktop"
 
-    # Icon images
-    install -dm755 "${pkgdir}/usr/share/"
-    cp -a "${srcdir}/squashfs-root/usr/share/icons" "${pkgdir}/usr/share/"
+    # Install Icon image from the extracted AppImage
+    install -Dm644 "${srcdir}/squashfs-root/Vial.png" \
+            "${pkgdir}/usr/share/icons/hicolor/1024x1024/apps/Vial.png"
+    # Also drop a copy in pixmaps just in case
+    install -Dm644 "${srcdir}/squashfs-root/Vial.png" \
+            "${pkgdir}/usr/share/pixmaps/Vial.png"
 
     # Symlink executable
     install -dm755 "${pkgdir}/usr/bin"
-    ln -s "/opt/${pkgname}/${pkgname}.AppImage" "${pkgdir}/usr/bin/${_pkgname}"
+    ln -s "/opt/${_pkgname}/${_pkgname}.AppImage" "${pkgdir}/usr/bin/${_pkgname}"
 
     # Create udev rule
     install -Dm644 "$srcdir/59-vial.rules" "$pkgdir/usr/lib/udev/rules.d/59-vial.rules"
