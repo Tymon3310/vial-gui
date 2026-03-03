@@ -9,11 +9,11 @@ pkgrel=1
 pkgdesc="Vial is an open-source cross-platform (Windows, Linux and Mac) GUI and a QMK fork for configuring your keyboard in real time, similar to VIA. Keychron branch."
 arch=('x86_64')
 url="https://github.com/Tymon3310/vial-gui"
-license=("GPL2")
-options=(!strip)
+license=("GPL-2.0-only")
+options=(!strip !debug)
 provides=("vial" "vial-keychron")
 conflicts=("vial" "vial-appimage" "vial-git" "vial-keychron-git")
-depends=(fuse2)
+depends=("zlib" "fuse2" "hicolor-icon-theme")
 _appimage="Vial-x86_64.AppImage"
 source_x86_64=("${_appimage}::https://github.com/Tymon3310/vial-gui/releases/download/v${pkgver}/Vial-x86_64.AppImage"
                "59-vial.rules")
@@ -43,9 +43,6 @@ package() {
     # Install Icon image from the extracted AppImage
     install -Dm644 "${srcdir}/squashfs-root/Vial.png" \
             "${pkgdir}/usr/share/icons/hicolor/1024x1024/apps/Vial.png"
-    # Also drop a copy in pixmaps just in case
-    install -Dm644 "${srcdir}/squashfs-root/Vial.png" \
-            "${pkgdir}/usr/share/pixmaps/Vial.png"
 
     # Symlink executable
     install -dm755 "${pkgdir}/usr/bin"
