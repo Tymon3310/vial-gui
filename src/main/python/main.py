@@ -94,6 +94,8 @@ class VialApplicationContext:
 
     def get_bundle_dir(self):
         """Calculate the absolute base path of the bundled app"""
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            return getattr(sys, '_MEIPASS')
         return path.abspath(path.dirname(__file__))
 
     def get_settings_file_names(self):
