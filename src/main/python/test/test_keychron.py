@@ -67,6 +67,8 @@ class TestKeychron(unittest.TestCase):
                 # This assumes the command doesn't require a specific data payload back for success.
                 # If a specific Keychron SET command needs a custom response, it should be added above.
                 return struct.pack("BBB", data[0], data[1], 0) + b"\x00" * 29
+            if data[0] == 0xAC:  # KC_GET_BATTERY_LEVEL
+                return struct.pack("BB", 0xAC, 75) + b"\x00" * 30  # Return 75% battery
 
             return original_sim_send(device, data, retries)
         

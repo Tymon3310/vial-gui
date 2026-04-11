@@ -217,11 +217,12 @@ class VialBridgeKeyboard(VialKeyboard):
 
         # Create a transport function that tunnels through the bridge.
         # Same signature as util.hid_send(dev, msg, retries=1).
-        # Cap retries at 5 — the USB-side callers request retries=20 which
+        # Cap retries at 10 — the USB-side callers request retries=20 which
         # is appropriate for direct USB (0.5 s delay each) but excessive for
         # wireless (0.1 s delay × 1 s read timeout → 22 s worst case).
+        # Dynamic entries need more retries over wireless, so cap at 10 instead of 5.
         def bridge_usb_send(dev, msg, retries=1):
-            return self.bridge.usb_send(msg, retries=min(retries, 5))
+            return self.bridge.usb_send(msg, retries=min(retries, 10))
 
         # Create Keyboard protocol object using the bridge transport
         self.keyboard = Keyboard(self.dev, usb_send=bridge_usb_send)

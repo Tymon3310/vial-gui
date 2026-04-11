@@ -102,7 +102,12 @@ class VialApplicationContext:
         """Read all settings files from the bundled resources/settings dir"""
         # resources/settings/ is the bundled path set in Vial.spec for source path
         settings_files_pattern = self.real_path("resources", "settings", "*.json")
-        return glob(settings_files_pattern)
+        result = glob(settings_files_pattern)
+        if not result:
+            # Fallback for alternative PyInstaller bundles (like vial-keychron-git AUR)
+            settings_files_pattern = self.real_path("src", "main", "python", "resources", "settings", "*.json")
+            result = glob(settings_files_pattern)
+        return result
 
     def real_path(self, *args):
         """Calculate the absolute path of a bundled file"""
@@ -112,7 +117,15 @@ class VialApplicationContext:
         """Implement fsb context's get_resource."""
         # TODO: FSB Assumed all resources are in the following directory. Maybe
         #  files should be moved?
-        return self.real_path(os.path.join("resources", "base", file_name))
+        res_path = self.real_path(os.path.join("resources", "base", file_name))
+        if not path.exists(res_path):
+            alt_path = self.real_path("src", "main", "resources", "base", file_name)
+            if path.exists(alt_path):
+                return alt_path
+            alt_path_py = self.real_path("src", "main", "python", "resources", "base", file_name)
+            if path.exists(alt_path_py):
+                return alt_path_py
+        return res_path
 
 
 if __name__ == "__main__":
