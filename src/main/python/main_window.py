@@ -86,8 +86,15 @@ class MainWindow(QMainWindow):
         self.btn_refresh_devices.setText(tr("MainWindow", "Refresh"))
         self.btn_refresh_devices.clicked.connect(self.on_click_refresh)
 
+        # Battery indicator (shown when wireless keyboard detected)
+        self.lbl_battery = QLabel()
+        self.lbl_battery.setStyleSheet("color: #4CAF50; font-weight: bold;")
+        self.lbl_battery.hide()
+
         layout_combobox = QHBoxLayout()
-        layout_combobox.addWidget(self.combobox_devices)
+        layout_combobox.addWidget(self.combobox_devices, 1)
+        layout_combobox.addStretch()
+        layout_combobox.addWidget(self.lbl_battery)
         if sys.platform != "emscripten":
             layout_combobox.addWidget(self.btn_refresh_devices)
 
@@ -370,6 +377,25 @@ class MainWindow(QMainWindow):
         if hard_refresh:
             self.on_device_selected()
 
+    def _update_battery_indicator(self):
+        """Update the battery label based on Keychron keyboard state."""
+        device = self.autorefresh.current_device
+        if (
+            isinstance(device, VialKeyboard)
+            and hasattr(device, "keyboard")
+            and device.keyboard
+            and hasattr(device.keyboard, "has_keychron_wireless")
+            and device.keyboard.has_keychron_wireless()
+        ):
+            bat = getattr(device.keyboard, "keychron_battery_level", 0)
+            if bat > 0:
+                self.lbl_battery.setText(f"Battery: {bat}%")
+                self.lbl_battery.show()
+            else:
+                self.lbl_battery.hide()
+        else:
+            self.lbl_battery.hide()
+
     def on_device_selected(self):
         if self._async_open_in_progress:
             # An async bridge open is already running — don't start another one.
@@ -449,6 +475,9 @@ class MainWindow(QMainWindow):
         self.rebuild()
         self.refresh_tabs()
 
+        # Update battery indicator if this is a wireless Keychron keyboard
+        self._update_battery_indicator()
+
         # Ensure the tab widget is visible (the async path hides it while
         # showing "Connecting...").
         self.lbl_no_devices.hide()
@@ -478,6 +507,8 @@ class MainWindow(QMainWindow):
         ):
             Unlocker.unlock(self.autorefresh.current_device.keyboard)
             self.autorefresh.current_device.keyboard.reload()
+
+        self._update_battery_indicator()
 
         for e in [
             self.layout_editor,
