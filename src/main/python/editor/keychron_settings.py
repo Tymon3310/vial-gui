@@ -114,23 +114,31 @@ class KeychronSettings(BasicEditor):
         )
         wireless_layout = QGridLayout()
 
+        # Battery level (display only)
         wireless_layout.addWidget(
-            QLabel(tr("KeychronSettings", "Backlight off after (seconds):")), 0, 0
+            QLabel(tr("KeychronSettings", "Battery Level:")), 0, 0
+        )
+        self.battery_label = QLabel("—")
+        self.battery_label.setStyleSheet("font-weight: bold; color: #4CAF50;")
+        wireless_layout.addWidget(self.battery_label, 0, 1)
+
+        wireless_layout.addWidget(
+            QLabel(tr("KeychronSettings", "Backlight off after (seconds):")), 1, 0
         )
         self.wireless_backlit_time = QSpinBox()
         self.wireless_backlit_time.setMinimum(5)
         self.wireless_backlit_time.setMaximum(3600)
         self.wireless_backlit_time.valueChanged.connect(self.on_wireless_changed)
-        wireless_layout.addWidget(self.wireless_backlit_time, 0, 1)
+        wireless_layout.addWidget(self.wireless_backlit_time, 1, 1)
 
         wireless_layout.addWidget(
-            QLabel(tr("KeychronSettings", "Sleep after idle (seconds):")), 1, 0
+            QLabel(tr("KeychronSettings", "Sleep after idle (seconds):")), 2, 0
         )
         self.wireless_idle_time = QSpinBox()
         self.wireless_idle_time.setMinimum(60)
         self.wireless_idle_time.setMaximum(7200)
         self.wireless_idle_time.valueChanged.connect(self.on_wireless_changed)
-        wireless_layout.addWidget(self.wireless_idle_time, 1, 1)
+        wireless_layout.addWidget(self.wireless_idle_time, 2, 1)
 
         self.wireless_group.setLayout(wireless_layout)
         container_layout.addWidget(self.wireless_group)
@@ -212,6 +220,14 @@ class KeychronSettings(BasicEditor):
             self.report_rate_group.setVisible(self.keyboard.has_keychron_report_rate())
             self.wireless_group.setVisible(self.keyboard.has_keychron_wireless())
             self.factory_reset_group.setVisible(True)
+
+            # Update battery label (only visible when wireless is supported)
+            if self.keyboard.has_keychron_wireless():
+                bat = getattr(self.keyboard, "keychron_battery_level", 0)
+                if bat > 0:
+                    self.battery_label.setText(f"{bat}% 🔋")
+                else:
+                    self.battery_label.setText("— (Charging or USB)")
 
             # Update debounce UI
             if self.keyboard.has_keychron_debounce():

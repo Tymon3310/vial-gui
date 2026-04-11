@@ -23,6 +23,7 @@ KC_GET_PROTOCOL_VERSION = 0xA0
 KC_GET_FIRMWARE_VERSION = 0xA1
 KC_GET_SUPPORT_FEATURE = 0xA2
 KC_GET_DEFAULT_LAYER = 0xA3
+KC_GET_BATTERY_LEVEL = 0xAC
 KC_MISC_CMD_GROUP = 0xA7
 KC_KEYCHRON_RGB = 0xA8
 KC_ANALOG_MATRIX = 0xA9
@@ -363,6 +364,7 @@ class ProtocolKeychron(BaseProtocol):
         # Wireless LPM
         self.keychron_wireless_backlit_time = 30
         self.keychron_wireless_idle_time = 300
+        self.keychron_battery_level = 0  # 0-100%, only meaningful when on wireless
 
         # Per-key RGB
         self.keychron_rgb_protocol_version = 0
@@ -513,6 +515,7 @@ class ProtocolKeychron(BaseProtocol):
 
         if self.has_keychron_wireless():
             self._reload_wireless_lpm()
+            self.keychron_battery_level = self.get_keychron_battery_level()
 
         if self.has_keychron_rgb():
             self._reload_keychron_rgb()
@@ -591,6 +594,20 @@ class ProtocolKeychron(BaseProtocol):
         if data[0] == KC_GET_DEFAULT_LAYER:
             return data[1]
         return -1
+
+    def get_keychron_battery_level(self):
+        """
+        Query the keyboard for the current battery level.
+
+        Returns:
+            int: Battery percentage (0-100), or 0 if on USB/unsupported.
+        """
+        data = self.usb_send(
+            self.dev, struct.pack("B", KC_GET_BATTERY_LEVEL), retries=3
+        )
+        if data[0] == KC_GET_BATTERY_LEVEL:
+            return data[1]
+        return 0
 
     # Debounce methods
     def _reload_debounce(self):
