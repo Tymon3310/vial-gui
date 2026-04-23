@@ -134,6 +134,7 @@ class AnalogMatrixEditor(BasicEditor):
         super().__init__()
         self.keyboard = None
         self.realtime_timer = None
+        self.calibration_timer = None
 
         # Main tab widget
         self.tabs = QTabWidget()
@@ -500,8 +501,8 @@ class AnalogMatrixEditor(BasicEditor):
         info_label = QLabel(
             tr(
                 "AnalogMatrix",
-                "Calibration allows you to set the zero-point and full-travel for each key.\n"
-                "This ensures accurate actuation detection for your specific switches.",
+                "Calibration lets you set the zero-point and full-travel for each key.\n"
+                "Start zero calibration first; the firmware will automatically advance to full travel and finish when complete.",
             )
         )
         info_label.setWordWrap(True)
@@ -513,22 +514,24 @@ class AnalogMatrixEditor(BasicEditor):
 
         buttons_layout = QHBoxLayout()
 
-        self.btn_calib_zero = QPushButton(tr("AnalogMatrix", "Calibrate Zero Point"))
+        self.btn_calib_zero = QPushButton(tr("AnalogMatrix", "Start Calibration"))
         self.btn_calib_zero.clicked.connect(
             lambda: self.start_calibration(CALIB_ZERO_TRAVEL_MANUAL)
         )
         buttons_layout.addWidget(self.btn_calib_zero)
 
-        self.btn_calib_full = QPushButton(tr("AnalogMatrix", "Calibrate Full Travel"))
+        self.btn_calib_full = QPushButton(tr("AnalogMatrix", "Finish Early"))
         self.btn_calib_full.clicked.connect(
-            lambda: self.start_calibration(CALIB_FULL_TRAVEL_MANUAL)
+            lambda: self.start_calibration(CALIB_SAVE_AND_EXIT)
         )
+        self.btn_calib_full.setEnabled(False)
         buttons_layout.addWidget(self.btn_calib_full)
 
         self.btn_calib_save = QPushButton(tr("AnalogMatrix", "Save Calibration"))
         self.btn_calib_save.clicked.connect(
             lambda: self.start_calibration(CALIB_SAVE_AND_EXIT)
         )
+        self.btn_calib_save.setVisible(False)
         buttons_layout.addWidget(self.btn_calib_save)
 
         self.btn_calib_clear = QPushButton(tr("AnalogMatrix", "Clear Calibration"))
@@ -1449,6 +1452,10 @@ class AnalogMatrixEditor(BasicEditor):
             self.realtime_timer.stop()
             self.realtime_timer = None
             self.btn_start_realtime.setText(tr("AnalogMatrix", "Start Monitoring"))
+        self._stop_calibration_polling()
+        self.calib_status.setText(tr("AnalogMatrix", "Status: Not calibrating"))
+        self.btn_calib_zero.setEnabled(True)
+        self.btn_calib_full.setEnabled(False)
 
         # Update profile info
         self.profile_count_label.setText(
@@ -1698,12 +1705,68 @@ class AnalogMatrixEditor(BasicEditor):
                     calib_type, tr("AnalogMatrix", "Status: Calibration in progress...")
                 )
             )
+            if calib_type == CALIB_ZERO_TRAVEL_MANUAL:
+                self.btn_calib_zero.setEnabled(False)
+                self.btn_calib_full.setEnabled(False)
+                self._start_calibration_polling()
+            elif calib_type in (CALIB_SAVE_AND_EXIT, CALIB_CLEAR):
+                self._stop_calibration_polling()
+                self.btn_calib_zero.setEnabled(True)
+                self.btn_calib_full.setEnabled(False)
         else:
             _show_warning(
                 self.tabs,
                 tr("AnalogMatrix", "Error"),
                 tr("AnalogMatrix", "Failed to start calibration."),
             )
+
+    def _start_calibration_polling(self):
+        """Poll firmware calibration state while calibration is active."""
+        if self.calibration_timer is None:
+            self.calibration_timer = QTimer()
+            self.calibration_timer.timeout.connect(self._poll_calibration_state)
+        if not self.calibration_timer.isActive():
+            self.calibration_timer.start(100)
+
+    def _stop_calibration_polling(self):
+        """Stop polling firmware calibration state."""
+        if self.calibration_timer and self.calibration_timer.isActive():
+            self.calibration_timer.stop()
+
+    def _poll_calibration_state(self):
+        """Update calibration status from the firmware state machine."""
+        if not self.keyboard:
+            self._stop_calibration_polling()
+            return
+
+        state = self.keyboard.get_keychron_calibration_state()
+        if not state:
+            return
+
+        cali_state = state.get("state", CALIB_OFF)
+        if cali_state == CALIB_ZERO_TRAVEL_MANUAL:
+            self.calib_status.setText(
+                tr("AnalogMatrix", "Status: Calibrating zero point...")
+            )
+            self.btn_calib_full.setEnabled(False)
+        elif cali_state == CALIB_FULL_TRAVEL_MANUAL:
+            self.calib_status.setText(
+                tr("AnalogMatrix", "Status: Calibrating full travel...")
+            )
+            self.btn_calib_full.setEnabled(True)
+        elif cali_state == CALIB_OFF:
+            calibrated = state.get("calibrated", 0)
+            if calibrated & 0x02:
+                self.calib_status.setText(
+                    tr("AnalogMatrix", "Status: Calibration complete")
+                )
+            else:
+                self.calib_status.setText(
+                    tr("AnalogMatrix", "Status: Not calibrating")
+                )
+            self.btn_calib_zero.setEnabled(True)
+            self.btn_calib_full.setEnabled(False)
+            self._stop_calibration_polling()
 
     def toggle_realtime_monitoring(self):
         """Toggle real-time key travel monitoring."""
@@ -1782,3 +1845,4 @@ class AnalogMatrixEditor(BasicEditor):
             self.realtime_timer.stop()
             self.realtime_timer = None
             self.btn_start_realtime.setText(tr("AnalogMatrix", "Start Monitoring"))
+        self._stop_calibration_polling()
