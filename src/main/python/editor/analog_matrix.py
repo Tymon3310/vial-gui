@@ -67,6 +67,8 @@ from util import tr
 from vial_device import VialKeyboard
 from widgets.actuation_keyboard_widget import ActuationKeyboardWidget
 
+import logging
+
 
 def _show_warning(parent, title, text):
     """Show a warning message box (non-blocking on Emscripten)."""
